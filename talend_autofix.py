@@ -88,6 +88,9 @@ class TalendAutoFixApp:
         self._out_path    = ""
         self._fix_running = False
         self._q           = queue.Queue()
+        # pipeline approval state
+        self._approval_event  = threading.Event()
+        self._approval_result = None
         # pipeline config path
         self._cfg_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "autofix_pipeline.json")
@@ -2117,7 +2120,8 @@ class TalendAutoFixApp:
     # ════════════════════════════════════════════════════════════════════════════
 
     _PIPE_STEPS = [
-        ("📄", "Copy fixed file to input folder"),
+        ("📄", "Copy file to input folder"),
+        ("🔐", "Approval gate"),
         ("📡", "Trigger Talend job via TAC"),
         ("⏳", "Wait for job completion"),
         ("🔍", "Validate data in database"),
@@ -2195,17 +2199,36 @@ class TalendAutoFixApp:
                  font=("Segoe UI", 8), fg=C["subtext"]).pack(side="left", padx=6)
 
         # ── Job / Task ─────────────────────────────────────────────────────────
-        self._tac_task_id_v  = tk.StringVar()
-        self._tac_job_name_v = tk.StringVar()
-        self._tac_timeout_v  = tk.StringVar(value="30")
+        self._tac_task_id_v    = tk.StringVar()
+        self._tac_job_name_v   = tk.StringVar()
+        self._tac_timeout_v    = tk.StringVar(value="30")
+        self._require_approval_v = tk.BooleanVar(value=True)   # ← APPROVAL FLAG
+        self._approval_email_v   = tk.StringVar()              # email for approval notice
         f2 = lf(inner, "⚙️ Talend Job / Task")
         row(f2, 0, "TAC Task ID:",        self._tac_task_id_v, width=20)
         row(f2, 1, "Job Name (label):",   self._tac_job_name_v)
         row(f2, 2, "Timeout (minutes):",  self._tac_timeout_v, width=8)
-        tk.Label(f2, text="  (Task ID found in TAC → Jobs → right-click job → Properties)",
+        # Approval setting
+        appr_f = tk.Frame(f2, bg=C["bg"]); appr_f.grid(
+            row=3, column=0, columnspan=2, sticky="w", padx=10, pady=(4, 2))
+        tk.Checkbutton(appr_f,
+                       text="🔐 Require approval before triggering job",
+                       variable=self._require_approval_v,
+                       bg=C["bg"], fg=C["yellow"], selectcolor=C["overlay"],
+                       activebackground=C["bg"],
+                       font=("Segoe UI", 9, "bold")).pack(side="left")
+        tk.Label(f2,
+                 text="  When enabled, pipeline pauses after file copy"
+                      " and shows an approval screen before running the job.",
                  bg=C["bg"], fg=C["subtext"],
                  font=("Segoe UI", 8, "italic")).grid(
-            row=3, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 6))
+            row=4, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 2))
+        row(f2, 5, "Approval notify email:", self._approval_email_v)
+        tk.Label(f2, text="  (Optional — sends a notification email to the approver"
+                          " so they know approval is needed)",
+                 bg=C["bg"], fg=C["subtext"],
+                 font=("Segoe UI", 8, "italic")).grid(
+            row=6, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 6))
 
         # ── File Deployment ────────────────────────────────────────────────────
         self._deploy_folder_v = tk.StringVar()
@@ -2296,7 +2319,7 @@ class TalendAutoFixApp:
         # ╔══════════════════════════════════════════════════════╗
         # ║  BOTTOM — Pipeline Execution                         ║
         # ╚══════════════════════════════════════════════════════╝
-        bot = tk.Frame(pane, bg=C["bg"]); pane.add(bot, minsize=260)
+        bot = tk.Frame(pane, bg=C["bg"]); pane.add(bot, minsize=320)
 
         bot_hdr = tk.Frame(bot, bg=C["surface"]); bot_hdr.pack(fill="x")
         tk.Label(bot_hdr, text="🚀  Pipeline Execution",
@@ -2326,6 +2349,77 @@ class TalendAutoFixApp:
             tk.Label(sf, textvariable=sv, bg=C["dark"], fg=C["text"],
                      font=("Segoe UI", 9, "bold")).pack()
 
+        # ── Approval Panel (hidden until pipeline reaches approval gate) ───────
+        self._approval_frame = tk.Frame(bot, bg="#2a1a00",
+                                        relief="ridge", bd=2)
+        # (packed/unpacked dynamically by _show_approval_panel / _hide_approval_panel)
+
+        ap = self._approval_frame
+        tk.Frame(ap, bg="#f9e2af", height=3).pack(fill="x")  # amber top border
+        ap_inner = tk.Frame(ap, bg="#2a1a00"); ap_inner.pack(fill="both",
+                                                               expand=True, padx=16, pady=12)
+
+        tk.Label(ap_inner,
+                 text="🔐  APPROVAL REQUIRED — Review and approve before job is triggered",
+                 font=("Segoe UI", 11, "bold"), bg="#2a1a00",
+                 fg="#f9e2af").pack(anchor="w")
+        tk.Frame(ap_inner, bg="#f9e2af", height=1).pack(fill="x", pady=6)
+
+        # Summary grid inside approval panel
+        sum_grid = tk.Frame(ap_inner, bg="#2a1a00"); sum_grid.pack(fill="x", pady=(0, 8))
+        for col_idx in range(4): sum_grid.columnconfigure(col_idx, weight=1)
+
+        self._appr_summary_vars = {}
+        for idx, (key, label) in enumerate([
+            ("file",     "File to deploy:"),
+            ("dest",     "Placed at folder:"),
+            ("job",      "Job to trigger:"),
+            ("cols",     "Columns fixed:"),
+            ("cells",    "Total cells fixed:"),
+            ("rows",     "Rows affected:"),
+        ]):
+            r, c = divmod(idx, 2)
+            tk.Label(sum_grid, text=label, bg="#2a1a00", fg="#a6adc8",
+                     font=("Segoe UI", 8, "bold"), anchor="e").grid(
+                row=r, column=c*2, padx=(0, 6), pady=2, sticky="e")
+            sv = tk.StringVar(value="—")
+            self._appr_summary_vars[key] = sv
+            tk.Label(sum_grid, textvariable=sv, bg="#2a1a00", fg="#f9e2af",
+                     font=("Consolas", 9), anchor="w").grid(
+                row=r, column=c*2+1, padx=(0, 20), pady=2, sticky="w")
+
+        tk.Frame(ap_inner, bg="#45475a", height=1).pack(fill="x", pady=6)
+
+        appr_note = tk.Label(ap_inner,
+                             text="⚠️  The fixed file has been placed in the input folder."
+                                  "  Approving will TRIGGER THE TALEND JOB immediately.",
+                             font=("Segoe UI", 9, "italic"), bg="#2a1a00",
+                             fg="#fab387", wraplength=800, justify="left")
+        appr_note.pack(anchor="w", pady=(0, 10))
+
+        btn_row_ap = tk.Frame(ap_inner, bg="#2a1a00"); btn_row_ap.pack(anchor="w")
+        self._appr_approve_btn = self._btn(
+            btn_row_ap, "✅  APPROVE — Trigger Job Now",
+            lambda: self._handle_approval(True),
+            "#1e6b3a", fg="#a6e3a1")
+        self._appr_approve_btn.configure(font=("Segoe UI", 11, "bold"),
+                                         padx=20, pady=8)
+        self._appr_approve_btn.pack(side="left", padx=(0, 12))
+
+        self._appr_reject_btn = self._btn(
+            btn_row_ap, "❌  REJECT — Cancel Pipeline",
+            lambda: self._handle_approval(False),
+            "#6b1e1e", fg="#f38ba8")
+        self._appr_reject_btn.configure(font=("Segoe UI", 11, "bold"),
+                                        padx=20, pady=8)
+        self._appr_reject_btn.pack(side="left")
+
+        self._appr_countdown_v = tk.StringVar(value="")
+        tk.Label(ap_inner, textvariable=self._appr_countdown_v,
+                 bg="#2a1a00", fg="#6c7086",
+                 font=("Segoe UI", 8, "italic")).pack(anchor="w", pady=(6, 0))
+        tk.Frame(ap, bg="#f9e2af", height=3).pack(fill="x")  # amber bottom border
+
         # Pipeline log
         log_f = tk.Frame(bot, bg=C["bg"]); log_f.pack(fill="both", expand=True,
                                                         padx=8, pady=(4, 4))
@@ -2342,6 +2436,10 @@ class TalendAutoFixApp:
         self._pipe_log.tag_configure("step",    foreground="#cba6f7",
                                      font=("Consolas", 9, "bold"))
         self._pipe_log.tag_configure("ts",      foreground="#585b70")
+        self._pipe_log.tag_configure("approve", foreground="#a6e3a1",
+                                     font=("Consolas", 9, "bold"))
+        self._pipe_log.tag_configure("reject",  foreground="#f38ba8",
+                                     font=("Consolas", 9, "bold"))
 
         # try loading saved settings
         self._reingest_load_cfg(silent=True)
@@ -2358,21 +2456,23 @@ class TalendAutoFixApp:
 
     def _reingest_save_cfg(self):
         cfg = {
-            "tac_url":        self._tac_url_v.get(),
-            "tac_user":       self._tac_user_v.get(),
-            "tac_pass":       self._tac_pass_v.get(),
-            "tac_task_id":    self._tac_task_id_v.get(),
-            "tac_job_name":   self._tac_job_name_v.get(),
-            "tac_timeout":    self._tac_timeout_v.get(),
-            "deploy_folder":  self._deploy_folder_v.get(),
-            "deploy_rename":  self._deploy_rename_v.get(),
-            "val_use_tab1":   self._val_use_tab1_v.get(),
-            "val_sql":        self._val_sql_text.get("1.0", "end-1c"),
-            "email_smtp":     self._email_smtp_v.get(),
-            "email_port":     self._email_port_v.get(),
-            "email_from":     self._email_from_v.get(),
-            "email_to":       self._email_to_v.get(),
-            "email_tls":      self._email_tls_v.get(),
+            "tac_url":          self._tac_url_v.get(),
+            "tac_user":         self._tac_user_v.get(),
+            "tac_pass":         self._tac_pass_v.get(),
+            "tac_task_id":      self._tac_task_id_v.get(),
+            "tac_job_name":     self._tac_job_name_v.get(),
+            "tac_timeout":      self._tac_timeout_v.get(),
+            "require_approval": self._require_approval_v.get(),
+            "approval_email":   self._approval_email_v.get(),
+            "deploy_folder":    self._deploy_folder_v.get(),
+            "deploy_rename":    self._deploy_rename_v.get(),
+            "val_use_tab1":     self._val_use_tab1_v.get(),
+            "val_sql":          self._val_sql_text.get("1.0", "end-1c"),
+            "email_smtp":       self._email_smtp_v.get(),
+            "email_port":       self._email_port_v.get(),
+            "email_from":       self._email_from_v.get(),
+            "email_to":         self._email_to_v.get(),
+            "email_tls":        self._email_tls_v.get(),
         }
         with open(self._cfg_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
@@ -2392,6 +2492,8 @@ class TalendAutoFixApp:
             self._tac_task_id_v.set(cfg.get("tac_task_id", ""))
             self._tac_job_name_v.set(cfg.get("tac_job_name", ""))
             self._tac_timeout_v.set(cfg.get("tac_timeout", "30"))
+            self._require_approval_v.set(cfg.get("require_approval", True))
+            self._approval_email_v.set(cfg.get("approval_email", ""))
             self._deploy_folder_v.set(cfg.get("deploy_folder", ""))
             self._deploy_rename_v.set(cfg.get("deploy_rename", "original"))
             self._val_use_tab1_v.set(cfg.get("val_use_tab1", True))
@@ -2445,6 +2547,99 @@ class TalendAutoFixApp:
         self._tac_status_v.set("Connecting…")
         threading.Thread(target=_run, daemon=True).start()
 
+    # ── Approval gate ────────────────────────────────────────────────────────
+
+    def _show_approval_panel(self, summary):
+        """Show the approval panel with pipeline summary. Called from main thread."""
+        # Populate summary fields
+        self._appr_summary_vars["file"].set(
+            os.path.basename(summary.get("file_fixed", "?")))
+        self._appr_summary_vars["dest"].set(
+            summary.get("steps", {}).get("copy", {}).get("dest", "—"))
+        job = self._tac_job_name_v.get() or self._tac_task_id_v.get() or "N/A"
+        self._appr_summary_vars["job"].set(job)
+
+        changes = summary.get("changes", [])
+        col_c = {}
+        for ch in changes:
+            col_c[ch["col"]] = col_c.get(ch["col"], 0) + 1
+        self._appr_summary_vars["cols"].set(
+            ", ".join(f"{c}({n})" for c, n in
+                      sorted(col_c.items(), key=lambda x: -x[1])) or "none")
+        self._appr_summary_vars["cells"].set(str(len(changes)))
+        rows_aff = len({ch["row_idx"] for ch in changes})
+        self._appr_summary_vars["rows"].set(str(rows_aff))
+
+        # Enable buttons
+        self._appr_approve_btn.configure(state="normal")
+        self._appr_reject_btn.configure(state="normal")
+        self._appr_countdown_v.set(
+            "Waiting for approval… pipeline is paused until you decide.")
+
+        # Slide in the approval frame (pack BEFORE the log)
+        self._approval_frame.pack(fill="x", padx=8, pady=(4, 0),
+                                  before=self._pipe_log.master)
+        self._approval_frame.lift()
+
+    def _hide_approval_panel(self):
+        """Hide the approval panel. Called from main thread."""
+        self._approval_frame.pack_forget()
+        self._appr_countdown_v.set("")
+
+    def _handle_approval(self, approved):
+        """Called when user clicks Approve or Reject. Sets event result."""
+        self._appr_approve_btn.configure(state="disabled")
+        self._appr_reject_btn.configure(state="disabled")
+        self._approval_result = approved
+        if approved:
+            self._appr_countdown_v.set("✅ Approved — resuming pipeline…")
+            self._plog("✅ APPROVED — Triggering Talend job…", "approve")
+        else:
+            self._appr_countdown_v.set("❌ Rejected — pipeline cancelled.")
+            self._plog("❌ REJECTED — Pipeline cancelled by user.", "reject")
+        self._approval_event.set()
+
+    def _send_approval_notification(self, summary):
+        """Send an email notifying the approver that action is needed."""
+        notify_addr = self._approval_email_v.get().strip()
+        if not notify_addr:
+            return  # no notification address configured
+        from_addr   = self._email_from_v.get().strip()
+        smtp_server = self._email_smtp_v.get().strip()
+        smtp_port   = int(self._email_port_v.get() or "25")
+        if not from_addr or not smtp_server:
+            return
+
+        file_name = os.path.basename(summary.get("file_fixed", "?"))
+        job_name  = self._tac_job_name_v.get() or self._tac_task_id_v.get() or "?"
+        changes   = summary.get("changes", [])
+
+        msg = EmailMessage()
+        msg["Subject"] = f"🔐 Approval Required — Talend Job '{job_name}' | {file_name}"
+        msg["From"]    = from_addr
+        msg["To"]      = notify_addr
+        body = (
+            f"Action Required: Please approve the Talend job trigger.\n\n"
+            f"File   : {file_name}\n"
+            f"Job    : {job_name}\n"
+            f"Cells fixed : {len(changes)}\n\n"
+            f"Open the Talend Auto-Fix application and click '✅ APPROVE' "
+            f"on Tab ⑤ to continue, or '❌ REJECT' to cancel.\n\n"
+            f"— MHA Inc. Talend ETL Team"
+        )
+        msg.set_content(body)
+        try:
+            with smtplib.SMTP(smtp_server, smtp_port, timeout=15) as s:
+                s.ehlo()
+                if self._email_tls_v.get():
+                    s.starttls(); s.ehlo()
+                if self._email_pass_v.get():
+                    s.login(from_addr, self._email_pass_v.get())
+                s.send_message(msg)
+            self._plog(f"📧 Approval notification sent to: {notify_addr}", "info")
+        except Exception as ex:
+            self._plog(f"⚠️ Could not send approval notification: {ex}", "warn")
+
     # ── Pipeline execution ────────────────────────────────────────────────────
 
     def _plog(self, msg, tag="info"):
@@ -2482,16 +2677,16 @@ class TalendAutoFixApp:
         self._pstep(0, "ok" if ok else "error")
         if ok:
             self._plog(f"✅ File placed at: {dst}", "info")
-        for i in range(1, 5):
+        for i in range(1, 6):
             self._pstep(i, "skip")
 
     def _run_validation_only(self):
         """Run DB validation query only and show results."""
         def _run():
             self._plog("── DB Validation Only mode ──", "step")
-            self._pstep(3, "running")
+            self._pstep(4, "running")
             ok, msg = self._do_validate_db()
-            self._pstep(3, "ok" if ok else "error")
+            self._pstep(4, "ok" if ok else "error")
             self._plog(msg, "info" if ok else "error")
         threading.Thread(target=_run, daemon=True).start()
 
@@ -2502,18 +2697,28 @@ class TalendAutoFixApp:
                 "No fixed file found.\n\n"
                 "Go to Tab ② → click '⚡ Fix All & Save' first, then run the pipeline.")
             return
-        if not messagebox.askyesno("🚀 Run Full Pipeline",
-                f"This will:\n"
-                f"  1. Copy fixed file to Talend input folder\n"
-                f"  2. Trigger the TAC job\n"
-                f"  3. Wait for job completion\n"
-                f"  4. Validate data in the database\n"
-                f"  5. Send confirmation email\n\n"
-                f"Fixed file: {os.path.basename(self._out_path)}\n\n"
-                f"Proceed?"):
+
+        need_approval = self._require_approval_v.get()
+        confirm_msg = (
+            f"This will run the full pipeline:\n\n"
+            f"  ① Copy fixed file to Talend input folder\n"
+            f"  ② {'⏸️ PAUSE for approval, then trigger' if need_approval else 'Trigger'} the TAC job\n"
+            f"  ③ Wait for job completion\n"
+            f"  ④ Validate data in the database\n"
+            f"  ⑤ Send confirmation email\n\n"
+            f"Fixed file: {os.path.basename(self._out_path)}\n\n"
+            + ("🔐 Approval is required — you will be prompted before the job runs.\n\n"
+               if need_approval else "")
+            + "Proceed?"
+        )
+        if not messagebox.askyesno("🚀 Run Full Pipeline", confirm_msg):
             return
 
-        # switch to Tab ⑤ so user sees progress
+        # Reset approval gate
+        self._approval_event.clear()
+        self._approval_result = None
+
+        # Switch to Tab ⑤
         self.nb.select(self.t_reingest)
 
         def _run():
@@ -2528,6 +2733,8 @@ class TalendAutoFixApp:
             }
             self._plog(f"Pipeline started  — {summary['started']}", "step")
             self._plog(f"Fixed file: {self._out_path}", "info")
+            if need_approval:
+                self._plog("🔐 Approval mode is ON — pipeline will pause before job trigger.", "warn")
 
             # ── STEP 1: copy file ────────────────────────────────────────────
             self._plog("", "info")
@@ -2541,25 +2748,50 @@ class TalendAutoFixApp:
             else:
                 self._plog(f"❌ Copy failed: {dst}", "error")
                 self._plog("Pipeline aborted — fix the folder path and retry.", "warn")
-                for i in range(1, 5): self._pstep(i, "skip")
+                for i in range(1, 6): self._pstep(i, "skip")
                 self._q.put(lambda: messagebox.showerror("Step 1 Failed",
                     f"Could not copy file:\n{dst}"))
                 return
 
-            # ── STEP 2: trigger TAC job ──────────────────────────────────────
+            # ── STEP 2: APPROVAL GATE ─────────────────────────────────────────
+            if need_approval:
+                self._plog("", "info")
+                self._plog("⏸️  PIPELINE PAUSED — Waiting for approval to trigger job…",
+                           "warn")
+                self._pstep(1, "running")
+                # Show approval panel on main thread
+                self._q.put(lambda: self._show_approval_panel(summary))
+                # Send optional notification email
+                self._send_approval_notification(summary)
+                # Block until approval received
+                self._approval_event.wait()
+                # Hide panel on main thread
+                self._q.put(self._hide_approval_panel)
+                if not self._approval_result:
+                    self._plog("❌ Pipeline cancelled — job was NOT triggered.", "error")
+                    self._pstep(1, "error")
+                    for i in range(2, 6): self._pstep(i, "skip")
+                    self._q.put(lambda: self._status("Pipeline cancelled — awaiting retry"))
+                    return
+                self._pstep(1, "ok")
+                self._plog("✅ Approved — continuing pipeline…", "approve")
+            else:
+                self._pstep(1, "skip")
+
+            # ── STEP 3: trigger TAC job ──────────────────────────────────────
             self._plog("", "info")
-            self._plog("STEP 2 — Trigger Talend job via TAC", "step")
-            self._pstep(1, "running")
+            self._plog("STEP 3 — Trigger Talend job via TAC", "step")
+            self._pstep(2, "running")
             task_id = self._tac_task_id_v.get().strip()
             exec_id = None
             if not task_id:
                 self._plog("⚠️ No Task ID configured — skipping TAC trigger", "warn")
-                self._pstep(1, "skip")
+                self._pstep(2, "skip")
                 summary["steps"]["trigger"] = {"ok": False, "skipped": True}
             else:
                 ok2, exec_id_or_err = self._do_trigger_job(task_id)
                 summary["steps"]["trigger"] = {"ok": ok2, "result": exec_id_or_err}
-                self._pstep(1, "ok" if ok2 else "error")
+                self._pstep(2, "ok" if ok2 else "error")
                 if ok2:
                     exec_id = exec_id_or_err
                     self._plog(f"✅ Job triggered — Execution ID: {exec_id}", "info")
@@ -2567,13 +2799,13 @@ class TalendAutoFixApp:
                     self._plog(f"❌ Trigger failed: {exec_id_or_err}", "error")
                     self._plog("Continuing to validation step anyway…", "warn")
 
-            # ── STEP 3: wait for job completion ──────────────────────────────
+            # ── STEP 4: wait for job completion ──────────────────────────────
             self._plog("", "info")
-            self._plog("STEP 3 — Wait for job completion", "step")
-            self._pstep(2, "running")
+            self._plog("STEP 4 — Wait for job completion", "step")
+            self._pstep(3, "running")
             if not task_id or not exec_id:
                 self._plog("⏭️ Skipped — no TAC execution to monitor", "warn")
-                self._pstep(2, "skip")
+                self._pstep(3, "skip")
                 summary["steps"]["wait"] = {"ok": True, "skipped": True}
             else:
                 timeout_min = int(self._tac_timeout_v.get() or "30")
@@ -2581,35 +2813,35 @@ class TalendAutoFixApp:
                 summary["steps"]["wait"] = {"ok": status == "ENDED_OK",
                                             "status": status}
                 if status == "ENDED_OK":
-                    self._pstep(2, "ok")
+                    self._pstep(3, "ok")
                     self._plog(f"✅ Job completed successfully", "info")
                 elif status == "TIMEOUT":
-                    self._pstep(2, "error")
+                    self._pstep(3, "error")
                     self._plog(f"❌ Job timed out after {timeout_min} minutes", "error")
                 else:
-                    self._pstep(2, "error")
+                    self._pstep(3, "error")
                     self._plog(f"❌ Job ended with status: {status}", "error")
 
-            # ── STEP 4: validate DB ───────────────────────────────────────────
+            # ── STEP 5: validate DB ───────────────────────────────────────────
             self._plog("", "info")
-            self._plog("STEP 4 — Validate data in database", "step")
-            self._pstep(3, "running")
+            self._plog("STEP 5 — Validate data in database", "step")
+            self._pstep(4, "running")
             ok4, val_msg = self._do_validate_db()
             summary["steps"]["validate"] = {"ok": ok4, "result": val_msg}
-            self._pstep(3, "ok" if ok4 else "error")
+            self._pstep(4, "ok" if ok4 else "error")
             if ok4:
                 self._plog(f"✅ {val_msg}", "info")
             else:
                 self._plog(f"⚠️ {val_msg}", "warn")
 
-            # ── STEP 5: send email ────────────────────────────────────────────
+            # ── STEP 6: send email ────────────────────────────────────────────
             self._plog("", "info")
-            self._plog("STEP 5 — Send confirmation email", "step")
-            self._pstep(4, "running")
+            self._plog("STEP 6 — Send confirmation email", "step")
+            self._pstep(5, "running")
             summary["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             ok5, email_msg = self._do_send_email(summary)
             summary["steps"]["email"] = {"ok": ok5, "result": email_msg}
-            self._pstep(4, "ok" if ok5 else "error")
+            self._pstep(5, "ok" if ok5 else "error")
             if ok5:
                 self._plog(f"✅ Email sent to: {self._email_to_v.get()}", "info")
             else:
