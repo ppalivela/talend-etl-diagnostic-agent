@@ -66,8 +66,9 @@ class TalendAutoFixApp:
         self.root.title("⚡ Talend Auto-Fix & Re-Ingestion Agent  |  MHA Inc.")
 
         sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-        w, h   = min(int(sw * 0.90), 1420), min(int(sh * 0.90), 900)
+        w, h   = min(int(sw * 0.95), 1600), min(int(sh * 0.95), 1040)
         root.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+        root.minsize(1100, 720)
         root.configure(bg=C["bg"])
         root.resizable(True, True)
 
@@ -133,7 +134,7 @@ class TalendAutoFixApp:
         self.t_log  = ttk.Frame(self.nb)
 
         self.nb.add(self.t_load, text="① Load & Schema")
-        self.nb.add(self.t_scan, text="② Scan Results")
+        self.nb.add(self.t_scan, text="② Compare & Fix")
         self.nb.add(self.t_fix,  text="③ Auto-Fix & Save")
         self.nb.add(self.t_log,  text="④ Change Log")
 
@@ -171,11 +172,35 @@ class TalendAutoFixApp:
             print(f"[poll_queue error] {e}")
         self.root.after(100, self._poll_queue)
 
+    # ══ scrollable tab wrapper ═══════════════════════════════════════════════
+    def _scrollable_tab(self, tab):
+        """Wraps tab content in Canvas+Scrollbar so everything is reachable."""
+        canvas = tk.Canvas(tab, bg=C["bg"], highlightthickness=0, bd=0)
+        vsb = ttk.Scrollbar(tab, orient="vertical",   command=canvas.yview)
+        hsb = ttk.Scrollbar(tab, orient="horizontal", command=canvas.xview)
+        canvas.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        vsb.pack(side="right", fill="y")
+        hsb.pack(side="bottom", fill="x")
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(canvas, bg=C["bg"])
+        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        def _on_inner(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        def _on_canvas(e):
+            canvas.itemconfigure(win_id, width=e.width)
+        inner.bind("<Configure>", _on_inner)
+        canvas.bind("<Configure>", _on_canvas)
+        canvas.bind("<Enter>",
+            lambda e: canvas.bind_all("<MouseWheel>",
+                lambda ev: canvas.yview_scroll(int(-1*(ev.delta/120)), "units")))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        return inner
+
     # ══════════════════════════════════════════════════════════════════════════
     # TAB 1 — LOAD & SCHEMA
     # ══════════════════════════════════════════════════════════════════════════
     def _build_tab_load(self):
-        tab = self.t_load
+        tab = self._scrollable_tab(self.t_load)
 
         # ── File section ──────────────────────────────────────────────────────
         lf = self._lf(tab, "📂  Step 1 — Load Source File")
@@ -870,14 +895,16 @@ class TalendAutoFixApp:
                 s = str(val)
                 if len(s) > limit:
                     issues.append({
-                        "row":     ridx + 2,
-                        "row_idx": ridx,
-                        "col":     fc,
+                        "row":      ridx + 2,
+                        "row_idx":  ridx,
+                        "col":      fc,
                         "original": s,
-                        "length":  len(s),
-                        "limit":   limit,
-                        "over":    len(s) - limit,
-                        "preview": s[:100],
+                        "length":   len(s),
+                        "limit":    limit,
+                        "over":     len(s) - limit,
+                        "preview":  s[:100],
+                        "proposed": s[:limit],
+                        "mode":     "🤖 Auto",
                     })
         return issues
 
@@ -887,22 +914,48 @@ class TalendAutoFixApp:
     def _build_tab_scan(self):
         tab = self.t_scan
 
-        hdr = tk.Frame(tab, bg=C["surface"]); hdr.pack(fill="x", padx=14, pady=(12, 4))
-        self._scan_sv = tk.StringVar(value="No scan yet — go to ① Load & Schema and click '🔍 Load File & Scan'.")
+        # ── header: status + action buttons ──────────────────────────────────
+        hdr = tk.Frame(tab, bg=C["surface"]); hdr.pack(fill="x", padx=14, pady=(10, 4))
+        self._scan_sv = tk.StringVar(
+            value="No scan yet — go to ① and click '🔍 Load File & Scan for Issues'.")
         tk.Label(hdr, textvariable=self._scan_sv, font=("Segoe UI", 10, "bold"),
                  bg=C["surface"], fg=C["yellow"]).pack(side="left", padx=10, pady=6)
-        self._btn(hdr, "▶  Proceed to Auto-Fix →",
-                  self._proceed_to_autofix, C["green"]).pack(side="right", padx=10, pady=4)
+        self._btn(hdr, "▶ Proceed to Tab ③",
+                  self._proceed_to_autofix, C["green"]).pack(side="right", padx=(0, 8), pady=4)
+        self._btn(hdr, "⚡ Fix All & Save",
+                  self._one_click_fix_and_save, C["mauve"]).pack(side="right", padx=(0, 4), pady=4)
         self._btn(hdr, "🔄 Re-Run Scan",
                   self._load_and_scan, C["blue"]).pack(side="right", padx=(0, 4), pady=4)
 
-        # Treeview
+        # ── legend ────────────────────────────────────────────────────────────
+        leg = tk.Frame(tab, bg=C["bg"]); leg.pack(fill="x", padx=14, pady=(0, 2))
+        for sym, clr, lbl in [("■", C["red"],    " Critical (>20 chars over)  "),
+                               ("■", C["yellow"], " Warning (1-20 over)  "),
+                               ("■", C["blue"],   " Manually edited  ")]:
+            tk.Label(leg, text=sym, fg=clr, bg=C["bg"],
+                     font=("Consolas", 11)).pack(side="left")
+            tk.Label(leg, text=lbl, fg=C["subtext"], bg=C["bg"],
+                     font=("Segoe UI", 9)).pack(side="left")
+        tk.Label(leg, text="  ↕ Double-click any row to manually edit its Proposed Fix",
+                 fg=C["teal"], bg=C["bg"],
+                 font=("Segoe UI", 9, "italic")).pack(side="left", padx=8)
+
+        # ── comparison treeview ───────────────────────────────────────────────
         tf = tk.Frame(tab, bg=C["bg"]); tf.pack(fill="both", expand=True, padx=14, pady=4)
-        cols = ("row", "col", "length", "limit", "over", "preview")
-        self._scan_tv = ttk.Treeview(tf, columns=cols, show="headings", selectmode="browse")
-        for c, lbl, w in [("row", "Row #", 70), ("col", "Column", 170),
-                           ("length", "Actual Len", 90), ("limit", "DB Limit", 80),
-                           ("over", "Over By", 80), ("preview", "Value Preview (first 100 chars)", 520)]:
+        cols = ("row", "col", "db_limit", "orig_len", "over",
+                "original", "proposed", "mode")
+        self._scan_tv = ttk.Treeview(tf, columns=cols, show="headings",
+                                      selectmode="browse")
+        for c, lbl, w in [
+            ("row",      "Row #",                               58),
+            ("col",      "Column",                             145),
+            ("db_limit", "DB Limit",                            72),
+            ("orig_len", "Actual Len",                          82),
+            ("over",     "Over By",                             72),
+            ("original", "Original Value  (first 80 chars)",   310),
+            ("proposed", "✏️  Proposed Fix  (dbl-click to edit)", 310),
+            ("mode",     "Mode",                                88),
+        ]:
             self._scan_tv.heading(c, text=lbl)
             self._scan_tv.column(c, width=w, minwidth=40)
         vsb = ttk.Scrollbar(tf, orient="vertical",   command=self._scan_tv.yview)
@@ -912,13 +965,22 @@ class TalendAutoFixApp:
         vsb.grid(row=0, column=1, sticky="ns")
         hsb.grid(row=1, column=0, sticky="ew")
         tf.rowconfigure(0, weight=1); tf.columnconfigure(0, weight=1)
-        self._scan_tv.tag_configure("critical", background="#2D0A0A", foreground="#f38ba8")
-        self._scan_tv.tag_configure("warning",  background="#2D1F00", foreground="#f9e2af")
-        self._scan_tv.tag_configure("clean",    background="#0f2018", foreground="#a6e3a1")
+        self._scan_tv.tag_configure("critical",
+            background="#2D0A0A", foreground="#f38ba8")
+        self._scan_tv.tag_configure("warning",
+            background="#2D1F00", foreground="#f9e2af")
+        self._scan_tv.tag_configure("manual",
+            background="#0A1A2D", foreground="#89b4fa")
+        self._scan_tv.tag_configure("clean",
+            background="#0f2018", foreground="#a6e3a1")
+        self._scan_tv.bind("<Double-1>", self._edit_proposed_fix)
 
+        # ── bottom buttons ────────────────────────────────────────────────────
         bf = tk.Frame(tab, bg=C["bg"]); bf.pack(fill="x", padx=14, pady=6)
         self._btn(bf, "💾 Export Issues Report", self._export_scan_report,
                   C["overlay"], fg=C["text"]).pack(side="left")
+        self._btn(bf, "✏️ Edit Selected Fix", self._edit_proposed_fix_btn,
+                  C["teal"]).pack(side="left", padx=8)
 
     def _proceed_to_autofix(self):
         if not hasattr(self, '_issues') or self._issues is None:
@@ -932,6 +994,172 @@ class TalendAutoFixApp:
                 "Do you still want to proceed to the Auto-Fix tab?"):
                 return
         self.nb.select(self.t_fix)
+
+    def _edit_proposed_fix_btn(self):
+        """Triggered by the Edit Selected Fix button."""
+        self._edit_proposed_fix()
+
+    def _edit_proposed_fix(self, event=None):
+        """Double-click or button handler — opens modal to edit a proposed fix."""
+        sel = self._scan_tv.selection()
+        if not sel:
+            messagebox.showinfo("No Selection", "Click a row to select it first."); return
+        iid = sel[0]
+        if not iid.startswith("iss_"):
+            return
+        idx = int(iid[4:])
+        iss = self._issues[idx]
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"Edit Proposed Fix — {iss['col']}  (DB Limit: {iss['limit']} chars)")
+        dlg.geometry("820x500")
+        dlg.configure(bg=C["bg"])
+        dlg.resizable(True, True)
+        dlg.grab_set()
+
+        # Info bar
+        info = tk.Frame(dlg, bg=C["surface"]); info.pack(fill="x", padx=10, pady=(10, 4))
+        tk.Label(info, text=f"Column: {iss['col']}",
+                 bg=C["surface"], fg=C["blue"],
+                 font=("Segoe UI", 10, "bold")).pack(side="left", padx=10, pady=6)
+        tk.Label(info,
+                 text=(f"  DB Limit: {iss['limit']} chars   |"
+                       f"   Original: {iss['length']} chars   |"
+                       f"   Over by: +{iss['over']} chars"),
+                 bg=C["surface"], fg=C["yellow"],
+                 font=("Segoe UI", 9)).pack(side="left", padx=6, pady=6)
+
+        # Original value (read-only)
+        of = tk.LabelFrame(dlg, text="  Original Value (read-only)  ",
+                           font=("Segoe UI", 9, "bold"),
+                           bg=C["surface"], fg=C["red"], relief="flat")
+        of.pack(fill="x", padx=10, pady=(0, 4))
+        orig_txt = scrolledtext.ScrolledText(
+            of, height=3, bg=C["dark"], fg=C["red"],
+            font=("Consolas", 9), relief="flat", wrap="word")
+        orig_txt.insert("1.0", iss["original"])
+        orig_txt.configure(state="disabled")
+        orig_txt.pack(fill="both", padx=8, pady=4)
+
+        # Proposed fix (editable)
+        pf = tk.LabelFrame(dlg,
+                            text=f"  Proposed Fix  (max {iss['limit']} chars — edit freely)  ",
+                            font=("Segoe UI", 9, "bold"),
+                            bg=C["surface"], fg=C["green"], relief="flat")
+        pf.pack(fill="both", expand=True, padx=10, pady=(0, 4))
+        char_v = tk.StringVar()
+        fix_txt = scrolledtext.ScrolledText(
+            pf, height=4,
+            bg=C["overlay"], fg=C["green"],
+            insertbackground=C["text"], font=("Consolas", 9),
+            relief="flat", wrap="word")
+        cur_proposed = iss.get("proposed", iss["original"][:iss["limit"]])
+        fix_txt.insert("1.0", cur_proposed)
+        fix_txt.pack(fill="both", expand=True, padx=8, pady=(4, 0))
+
+        def _update_count(e=None):
+            n    = len(fix_txt.get("1.0", "end-1c"))
+            over = n - iss["limit"]
+            if over > 0:
+                char_v.set(f"⚠️  {n} chars  —  {over} OVER limit! (will still save as-is)")
+            else:
+                char_v.set(f"✅  {n} / {iss['limit']} chars")
+        fix_txt.bind("<KeyRelease>", _update_count)
+        _update_count()
+
+        tk.Label(pf, textvariable=char_v, bg=C["surface"], fg=C["teal"],
+                 font=("Segoe UI", 9, "bold")).pack(anchor="e", padx=8, pady=(0, 4))
+
+        def _save():
+            new_val = fix_txt.get("1.0", "end-1c")
+            iss["proposed"] = new_val
+            iss["mode"]     = "✏️ Manual"
+            self._scan_tv.item(f"iss_{idx}", values=(
+                iss["row"], iss["col"], iss["limit"], iss["length"],
+                f"+{iss['over']}", iss["original"][:80], new_val[:80], "✏️ Manual",
+            ), tags=("manual",))
+            dlg.destroy()
+
+        def _reset():
+            fix_txt.delete("1.0", "end")
+            fix_txt.insert("1.0", iss["original"][:iss["limit"]])
+            _update_count()
+
+        btns = tk.Frame(dlg, bg=C["bg"]); btns.pack(fill="x", padx=10, pady=8)
+        self._btn(btns, "✅ Save Fix", _save,
+                  C["green"]).pack(side="left", padx=(0, 8))
+        self._btn(btns, "↩ Reset to Auto-Truncate", _reset,
+                  C["overlay"], fg=C["text"]).pack(side="left", padx=(0, 8))
+        self._btn(btns, "❌ Cancel", dlg.destroy,
+                  C["red"]).pack(side="left")
+        dlg.wait_window()
+
+    def _one_click_fix_and_save(self):
+        """Apply all proposed fixes (auto + manual edits) and save in one click."""
+        if self._issues is None:
+            messagebox.showwarning("No Scan Run",
+                "Run a scan first — go to Tab ① and click '🔍 Load File & Scan'."); return
+        if not self._issues:
+            messagebox.showinfo("File Is Clean",
+                "No truncation issues found — nothing to fix!"); return
+        if self._df is None:
+            messagebox.showwarning("No File", "No file loaded."); return
+
+        base, ext = os.path.splitext(self._file_path)
+        out_path  = f"{base}_FIXED{ext}"
+
+        manual_count = sum(1 for i in self._issues if i.get("mode") == "✏️ Manual")
+        auto_count   = len(self._issues) - manual_count
+        if not messagebox.askyesno("Confirm Fix & Save",
+                f"Ready to fix {len(self._issues)} cell(s) and save:\n\n"
+                f"  🤖 Auto-truncated : {auto_count}\n"
+                f"  ✏️  Manually edited : {manual_count}\n\n"
+                f"Output file:\n  {out_path}\n\n"
+                f"Proceed?"):
+            return
+
+        def _run():
+            self._q.put(self._prog_start)
+            self._q.put(lambda: self._status("Applying fixes…"))
+            try:
+                df      = self._df.copy()
+                changes = []
+                total   = len(self._issues)
+                for idx2, iss in enumerate(self._issues):
+                    fc       = iss["col"]
+                    ridx     = iss["row_idx"]
+                    proposed = iss.get("proposed", iss["original"][:iss["limit"]])
+                    df.at[ridx, fc] = proposed
+                    changes.append({
+                        "row":      iss["row"],
+                        "row_idx":  ridx,
+                        "col":      fc,
+                        "original": iss["original"],
+                        "fixed":    proposed,
+                        "orig_len": iss["length"],
+                        "fix_len":  len(proposed),
+                        "limit":    iss["limit"],
+                        "mode":     iss.get("mode", "🤖 Auto"),
+                    })
+                    pct = int((idx2 + 1) / total * 100)
+                    self._q.put(lambda p=pct: self._fix_prog.configure(value=p))
+                self._fixed_df   = df
+                self._change_log = changes
+                self._save_file(df, out_path)
+                self._out_path   = out_path
+                self._q.put(lambda: self._show_fix_summary(changes, out_path))
+                self._q.put(lambda: self._refresh_log_tab(changes))
+                self._q.put(lambda: self.nb.select(self.t_log))
+                self._q.put(lambda: self._status(
+                    f"✅ {len(changes)} cells fixed → {out_path}"))
+            except Exception as ex:
+                err = traceback.format_exc()
+                self._q.put(lambda: messagebox.showerror("Fix Error", f"{ex}\n\n{err}"))
+                self._q.put(lambda: self._status(f"Error: {ex}"))
+            finally:
+                self._q.put(self._prog_stop)
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def _populate_scan_tab(self, df, issues):
         self._scan_tv.delete(*self._scan_tv.get_children())
@@ -948,14 +1176,28 @@ class TalendAutoFixApp:
         top = ", ".join(f"{c}({n})" for c, n in
                         sorted(col_c.items(), key=lambda x: -x[1])[:4])
         self._scan_sv.set(
-            f"⚠️  {len(issues):,} issues across {len(col_c)} columns, "
-            f"{affected:,} rows affected — Top columns: {top}")
+            f"⚠️  {len(issues):,} issues  |  {len(col_c)} columns  |  "
+            f"{affected:,} rows affected  |  Top: {top}  "
+            f"  ↕ Double-click to edit proposed fix")
 
-        for iss in issues:
-            tag = "critical" if iss["over"] > 20 else "warning"
-            self._scan_tv.insert("", "end", values=(
-                iss["row"], iss["col"], iss["length"],
-                iss["limit"], f"+{iss['over']}", iss["preview"],
+        for idx, iss in enumerate(issues):
+            mode     = iss.get("mode", "🤖 Auto")
+            proposed = iss.get("proposed", iss["original"][:iss["limit"]])
+            if mode == "✏️ Manual":
+                tag = "manual"
+            elif iss["over"] > 20:
+                tag = "critical"
+            else:
+                tag = "warning"
+            self._scan_tv.insert("", "end", iid=f"iss_{idx}", values=(
+                iss["row"],
+                iss["col"],
+                iss["limit"],
+                iss["length"],
+                f"+{iss['over']}",
+                iss["original"][:80],
+                proposed[:80],
+                mode,
             ), tags=(tag,))
 
     def _export_scan_report(self):
@@ -1007,7 +1249,7 @@ class TalendAutoFixApp:
     # TAB 3 — AUTO-FIX & SAVE
     # ══════════════════════════════════════════════════════════════════════════
     def _build_tab_fix(self):
-        tab = self.t_fix
+        tab = self._scrollable_tab(self.t_fix)
 
         # Strategy
         lf1 = self._lf(tab, "✂️  Step 3a — Fix Strategy")
@@ -1166,7 +1408,10 @@ class TalendAutoFixApp:
             limit    = iss["limit"]
             original = str(df.at[ridx, fc])
 
-            if strategy == "exact":
+            # Honour manual edit; otherwise apply the chosen strategy
+            if iss.get("mode") == "✏️ Manual":
+                fixed = iss.get("proposed", original[:limit])
+            elif strategy == "exact":
                 fixed = original[:limit]
             elif strategy == "buffer":
                 fixed = original[:max(1, limit - buf)]
@@ -1185,6 +1430,7 @@ class TalendAutoFixApp:
                 "orig_len": len(original),
                 "fix_len":  len(fixed),
                 "limit":    limit,
+                "mode":     iss.get("mode", "🤖 Auto"),
             })
             pct = int((idx + 1) / total * 100)
             self._q.put(lambda p=pct: self._fix_prog.configure(value=p))
