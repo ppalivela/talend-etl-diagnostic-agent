@@ -160,9 +160,15 @@ class TalendAutoFixApp:
     def _poll_queue(self):
         try:
             while True:
-                self._q.get_nowait()()
+                fn = self._q.get_nowait()
+                try:
+                    fn()
+                except Exception as cb_err:
+                    print(f"[queue-cb error] {cb_err}")
         except queue.Empty:
             pass
+        except Exception as e:
+            print(f"[poll_queue error] {e}")
         self.root.after(100, self._poll_queue)
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -490,6 +496,8 @@ class TalendAutoFixApp:
             raise RuntimeError("pyodbc not installed")
         conn = self._db_connect(server, db, user, pwd)
         cur  = conn.cursor()
+        # READ UNCOMMITTED prevents hangs on locked tables/pages
+        cur.execute("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
         # sys catalog is 10-50x faster than INFORMATION_SCHEMA on large DBs
         cur.execute("""
             SELECT
@@ -556,6 +564,7 @@ class TalendAutoFixApp:
             raise RuntimeError("pyodbc not installed")
         conn = self._db_connect(server, db, user, pwd)
         cur  = conn.cursor()
+        cur.execute("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
         # sys.columns + sys.types is much faster than INFORMATION_SCHEMA.COLUMNS
         cur.execute("""
             SELECT
@@ -623,6 +632,7 @@ class TalendAutoFixApp:
             raise RuntimeError("pyodbc not installed")
         conn = self._db_connect(server, db, user, pwd)
         cur  = conn.cursor()
+        cur.execute("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
         sch, tbl = ("dbo", table) if "." not in table else table.split(".", 1)
         cur.execute("""
             SELECT
@@ -651,22 +661,25 @@ class TalendAutoFixApp:
         return result
 
     def _db_connect(self, server, db, user, pwd):
-        """Shared fast connection helper using sys catalog-friendly settings."""
+        """Shared connection helper — connection timeout=10s, query timeout=30s."""
         if not pyodbc:
             raise RuntimeError("pyodbc not installed")
         drivers = [d for d in pyodbc.drivers() if "SQL Server" in d]
         if not drivers:
             raise RuntimeError("No SQL Server ODBC driver found on this machine")
         driver = next((d for d in drivers if "17" in d), drivers[0])
+        # NOTE: ApplicationIntent=ReadOnly removed — can hang if no AG read replica
         if user:
             cs = (f"DRIVER={{{driver}}};SERVER={server};DATABASE={db};"
                   f"UID={user};PWD={pwd};TrustServerCertificate=yes;"
-                  f"ApplicationIntent=ReadOnly")
+                  f"Connection Timeout=10")
         else:
             cs = (f"DRIVER={{{driver}}};SERVER={server};DATABASE={db};"
                   f"Trusted_Connection=yes;TrustServerCertificate=yes;"
-                  f"ApplicationIntent=ReadOnly")
-        return pyodbc.connect(cs, timeout=10)
+                  f"Connection Timeout=10")
+        conn = pyodbc.connect(cs, timeout=10)
+        conn.timeout = 30   # query execution timeout (30s max per statement)
+        return conn
 
     def _parse_schema_only(self):
         try:
