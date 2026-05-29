@@ -76,7 +76,7 @@ class TalendAutoFixApp:
         self._fixed_df    = None    # fixed DataFrame
         self._schema      = {}      # {col_lower: {"col": str, "limit": int, "type": str}}
         self._col_map     = {}      # {file_col: schema_key}
-        self._issues      = []      # list of dicts
+        self._issues      = None    # None = not scanned yet; [] = scanned, no issues
         self._change_log  = []      # list of dicts
         self._file_path   = ""
         self._file_ext    = ""
@@ -742,7 +742,34 @@ class TalendAutoFixApp:
             messagebox.showwarning("No File", "Browse and select a source file first."); return
 
         src = self._schema_src.get()
-        if src != "DB" or not self._schema:
+
+        # DB mode: auto-fetch schema if a table is selected but schema not loaded yet
+        if src == "DB" and not self._schema:
+            server = self._db_server.get().strip()
+            table  = self._db_table.get().strip()
+            db     = self._db_name.get().strip()
+            user   = self._db_user.get().strip()
+            pwd    = self._db_pass.get().strip()
+            if not server or not table:
+                messagebox.showwarning("No Schema",
+                    "DB schema source selected but no table loaded.\n"
+                    "Either:\n"
+                    "  • Click '✅ Load Schema' on Tab ①, OR\n"
+                    "  • Switch to DDL or Manual schema source."); return
+            # Auto-fetch synchronously (blocking) with progress indicator
+            self._status("Auto-loading schema before scan…"); self._prog_start()
+            try:
+                self._schema = self._db_fetch(server, db, table, user, pwd)
+                self._refresh_schema_summary()
+            except Exception as ex:
+                self._prog_stop()
+                messagebox.showerror("Schema Load Error",
+                    f"Could not auto-load schema for '{table}':\n{ex}\n\n"
+                    "Use the '✅ Load Schema' button on Tab ① first."); return
+            finally:
+                self._prog_stop()
+
+        if src != "DB":
             try:
                 self._schema = self._parse_schema()
             except Exception as ex:
@@ -755,7 +782,8 @@ class TalendAutoFixApp:
         if not cols_with_limits:
             messagebox.showwarning("No Limits",
                 "Schema loaded but no column length limits found.\n"
-                "Check your DDL or manual entries."); return
+                "Only VARCHAR / NVARCHAR columns are checked for truncation.\n"
+                "Check your DDL or select the correct DB table."); return
 
         self._status("Loading file…"); self._prog_start()
 
@@ -804,12 +832,33 @@ class TalendAutoFixApp:
 
     def _scan(self, df):
         issues = []
-        # Build column map (case-insensitive)
+        # Build column map (case-insensitive, also try replacing spaces↔underscores)
         self._col_map = {}
         for fc in df.columns:
             key = fc.strip().lower()
             if key in self._schema:
                 self._col_map[fc] = key
+            else:
+                # Try underscore↔space substitution for loose matching
+                alt = key.replace(" ", "_")
+                if alt in self._schema:
+                    self._col_map[fc] = alt
+                else:
+                    alt2 = key.replace("_", " ")
+                    if alt2 in self._schema:
+                        self._col_map[fc] = alt2
+
+        if not self._col_map:
+            # Surface a clear warning — file cols vs schema cols don't match
+            file_cols   = [c.strip() for c in df.columns[:8]]
+            schema_cols = [v["col"] for v in list(self._schema.values())[:8]]
+            self._q.put(lambda: messagebox.showwarning(
+                "No Column Matches",
+                f"None of the file columns matched the DB schema.\n\n"
+                f"File columns  :  {', '.join(file_cols)}\n"
+                f"Schema columns:  {', '.join(schema_cols)}\n\n"
+                "Check that you selected the correct table and sheet."))
+            return issues
 
         for fc, sk in self._col_map.items():
             limit = self._schema[sk].get("limit")
@@ -839,11 +888,13 @@ class TalendAutoFixApp:
         tab = self.t_scan
 
         hdr = tk.Frame(tab, bg=C["surface"]); hdr.pack(fill="x", padx=14, pady=(12, 4))
-        self._scan_sv = tk.StringVar(value="No scan results yet — go to ① Load & Schema.")
+        self._scan_sv = tk.StringVar(value="No scan yet — go to ① Load & Schema and click '🔍 Load File & Scan'.")
         tk.Label(hdr, textvariable=self._scan_sv, font=("Segoe UI", 10, "bold"),
                  bg=C["surface"], fg=C["yellow"]).pack(side="left", padx=10, pady=6)
         self._btn(hdr, "▶  Proceed to Auto-Fix →",
-                  lambda: self.nb.select(self.t_fix), C["green"]).pack(side="right", padx=10, pady=4)
+                  self._proceed_to_autofix, C["green"]).pack(side="right", padx=10, pady=4)
+        self._btn(hdr, "🔄 Re-Run Scan",
+                  self._load_and_scan, C["blue"]).pack(side="right", padx=(0, 4), pady=4)
 
         # Treeview
         tf = tk.Frame(tab, bg=C["bg"]); tf.pack(fill="both", expand=True, padx=14, pady=4)
@@ -868,6 +919,19 @@ class TalendAutoFixApp:
         bf = tk.Frame(tab, bg=C["bg"]); bf.pack(fill="x", padx=14, pady=6)
         self._btn(bf, "💾 Export Issues Report", self._export_scan_report,
                   C["overlay"], fg=C["text"]).pack(side="left")
+
+    def _proceed_to_autofix(self):
+        if not hasattr(self, '_issues') or self._issues is None:
+            messagebox.showwarning("No Scan Run",
+                "Please run a scan first.\n"
+                "Click '🔄 Re-Run Scan' or go to Tab ① and click '🔍 Load File & Scan for Issues'.")
+            return
+        if not self._issues:
+            if not messagebox.askyesno("No Issues Found",
+                "The scan found NO truncation issues — the file appears clean.\n\n"
+                "Do you still want to proceed to the Auto-Fix tab?"):
+                return
+        self.nb.select(self.t_fix)
 
     def _populate_scan_tab(self, df, issues):
         self._scan_tv.delete(*self._scan_tv.get_children())
