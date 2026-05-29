@@ -78,6 +78,7 @@ class TalendAutoFixApp:
         self._schema      = {}      # {col_lower: {"col": str, "limit": int, "type": str}}
         self._col_map        = {}   # {file_col: schema_key}  (auto + manual)
         self._manual_col_map = {}   # {file_col: schema_key}  (user overrides)
+        self._col_strategy   = {}   # {file_col: "head"|"tail"} (user overrides)
         self._issues      = None    # None = not scanned yet; [] = scanned, no issues
         self._change_log  = []      # list of dicts
         self._file_path   = ""
@@ -856,10 +857,49 @@ class TalendAutoFixApp:
                            keep_default_na=False, encoding="utf-8-sig",
                            on_bad_lines="skip")
 
+    # ── Smart Truncation ──────────────────────────────────────────────────────
+
+    _TAIL_PATTERNS = [
+        # exact or suffix matches (column name ends with one of these)
+        "id", "Id", "ID", "code", "Code", "num", "Num", "nbr", "Nbr",
+        "ref", "Ref", "key", "Key", "no", "No", "acct", "Acct",
+        # substring matches inside name
+        "_id", "_code", "_num", "_nbr", "_ref", "_key", "_no", "_acct",
+        "newfin", "finid", "memid", "memno", "mbrno", "account", "npi",
+        "provid", "drugid", "ndcid", "rxcui", "rebate", "formulary",
+        "claimno", "authno", "groupno", "groupid", "planid", "memberid",
+    ]
+
+    def _detect_strategy(self, col_name):
+        """Return 'tail' for ID/code columns, 'head' for text/name columns."""
+        c = col_name.lower().replace(" ", "_").replace("-", "_")
+        for p in self._TAIL_PATTERNS:
+            p_low = p.lower()
+            if c == p_low or c.endswith("_" + p_low) or c.endswith(p_low):
+                return "tail"
+        return "head"
+
+    def _smart_truncate(self, col_name, value, limit):
+        """Truncate value using the best strategy for this column type.
+
+        Returns (proposed_str, mode_label).
+
+        Strategy rules:
+        - ID / code / number cols  → keep TAIL  (strip leading prefix, e.g. 'OR-')
+        - Name / desc / text cols  → keep HEAD  (natural left-truncation)
+        User can override via self._col_strategy[col_name] = 'head' | 'tail'
+        """
+        strategy = self._col_strategy.get(col_name) or self._detect_strategy(col_name)
+        if strategy == "tail":
+            return value[-limit:], "🎯 Auto-Tail"
+        else:
+            return value[:limit], "✂️ Auto-Head"
+
     def _scan(self, df):
         issues = []
         # Build column map (case-insensitive, also try replacing spaces↔underscores)
-        self._col_map = {}
+        self._col_map      = {}
+        # Keep _col_strategy and _manual_col_map so user settings survive re-scan
         for fc in df.columns:
             key = fc.strip().lower()
             if key in self._schema:
@@ -900,6 +940,7 @@ class TalendAutoFixApp:
                     continue
                 s = str(val)
                 if len(s) > limit:
+                    proposed, trunc_mode = self._smart_truncate(fc, s, limit)
                     issues.append({
                         "row":      ridx + 2,
                         "row_idx":  ridx,
@@ -909,8 +950,8 @@ class TalendAutoFixApp:
                         "limit":    limit,
                         "over":     len(s) - limit,
                         "preview":  s[:100],
-                        "proposed": s[:limit],
-                        "mode":     "🤖 Auto",
+                        "proposed": proposed,
+                        "mode":     trunc_mode,
                     })
         return issues
 
@@ -970,18 +1011,19 @@ class TalendAutoFixApp:
         tf_top = tk.Frame(top_outer, bg=C["bg"])
         tf_top.pack(fill="both", expand=True, padx=6, pady=(0, 4))
         cmp_cols = ("status", "file_col", "file_max", "file_sample",
-                    "db_col",  "db_type",  "db_limit", "issue_cnt")
+                    "db_col",  "db_type",  "db_limit", "issue_cnt", "strategy")
         self._cmp_tv = ttk.Treeview(tf_top, columns=cmp_cols, show="headings",
                                      selectmode="browse")
         for c, lbl, w in [
             ("status",      "Status",                          90),
             ("file_col",    "File Column",                    160),
             ("file_max",    "Max in File",                     85),
-            ("file_sample", "Sample Value (first row)",        270),
+            ("file_sample", "Sample Value (first row)",        260),
             ("db_col",      "DB Column",                       160),
             ("db_type",     "DB Type",                          85),
             ("db_limit",    "DB Limit",                         75),
             ("issue_cnt",   "# Issues",                         70),
+            ("strategy",    "Fix Strategy (right-click)",      150),
         ]:
             self._cmp_tv.heading(c, text=lbl)
             self._cmp_tv.column(c, width=w, minwidth=40)
@@ -1001,6 +1043,7 @@ class TalendAutoFixApp:
         self._cmp_tv.tag_configure("manual",   background="#0f1a2a", foreground="#cba6f7")
         self._cmp_tv.bind("<<TreeviewSelect>>", self._on_cmp_select)
         self._cmp_tv.bind("<Double-1>",         self._on_cmp_dblclick)
+        self._cmp_tv.bind("<Button-3>",         self._cmp_context_menu)  # right-click
 
         # ╔══════════════════════════════════════════════════════╗
         # ║  BOTTOM PANE — Row-Level Issues                      ║
@@ -1136,6 +1179,21 @@ class TalendAutoFixApp:
         fix_txt.insert("1.0", cur_proposed)
         fix_txt.pack(fill="both", expand=True, padx=8, pady=(4, 0))
 
+        # Quick-fill buttons: Head / Tail
+        qf = tk.Frame(pf, bg=C["surface"]); qf.pack(fill="x", padx=8, pady=(2, 0))
+        tk.Label(qf, text="Quick-fill:", bg=C["surface"], fg=C["subtext"],
+                 font=("Segoe UI", 8)).pack(side="left", padx=(0, 4))
+        head_fix = iss["original"][:iss["limit"]]
+        tail_fix = iss["original"][-iss["limit"]:]
+        def _apply_head():
+            fix_txt.delete("1.0", "end"); fix_txt.insert("1.0", head_fix); _update_count()
+        def _apply_tail():
+            fix_txt.delete("1.0", "end"); fix_txt.insert("1.0", tail_fix); _update_count()
+        self._btn(qf, f"✂️ Head → '{head_fix[:30]}{'…' if len(head_fix)>30 else ''}'",
+                  _apply_head, C["overlay"], fg=C["text"]).pack(side="left", padx=2)
+        self._btn(qf, f"🎯 Tail → '{tail_fix[:30]}{'…' if len(tail_fix)>30 else ''}'",
+                  _apply_tail, C["teal"]).pack(side="left", padx=2)
+
         def _update_count(e=None):
             n    = len(fix_txt.get("1.0", "end-1c"))
             over = n - iss["limit"]
@@ -1160,8 +1218,9 @@ class TalendAutoFixApp:
             dlg.destroy()
 
         def _reset():
+            smart_fix, _ = self._smart_truncate(iss["col"], iss["original"], iss["limit"])
             fix_txt.delete("1.0", "end")
-            fix_txt.insert("1.0", iss["original"][:iss["limit"]])
+            fix_txt.insert("1.0", smart_fix)
             _update_count()
 
         btns = tk.Frame(dlg, bg=C["bg"]); btns.pack(fill="x", padx=10, pady=8)
@@ -1288,6 +1347,7 @@ class TalendAutoFixApp:
                 "db_type":     db_type,
                 "db_limit":    str(db_limit) if db_limit else "—",
                 "issue_cnt":   str(n_issues) if n_issues else "—",
+                "strategy":    self._strategy_label(fc),
                 "tag":         tag,
             })
 
@@ -1307,6 +1367,7 @@ class TalendAutoFixApp:
                 "db_type":     "—",
                 "db_limit":    "—",
                 "issue_cnt":   "—",
+                "strategy":    "— (map column first)",
                 "tag":         "fileonly",
             })
 
@@ -1323,9 +1384,106 @@ class TalendAutoFixApp:
                 "db_type":     sv.get("type", "?"),
                 "db_limit":    str(sv.get("limit")) if sv.get("limit") else "—",
                 "issue_cnt":   "—",
+                "strategy":    "—",
                 "tag":         "dbonly",
             })
         return rows
+
+    def _strategy_label(self, col_name):
+        """Human-readable label for the current truncation strategy of a column."""
+        strat = self._col_strategy.get(col_name) or self._detect_strategy(col_name)
+        auto  = "auto" not in (self._col_strategy.get(col_name) or "auto")
+        prefix = "👤 " if col_name in self._col_strategy else "🤖 "
+        if strat == "tail":
+            return f"{prefix}Tail — keep last N chars (ID)"
+        else:
+            return f"{prefix}Head — keep first N chars (Text)"
+
+    def _cmp_context_menu(self, event):
+        """Right-click context menu on schema comparison row for strategy toggle."""
+        iid = self._cmp_tv.identify_row(event.y)
+        if not iid:
+            return
+        self._cmp_tv.selection_set(iid)
+        vals = self._cmp_tv.item(iid, "values")
+        if not vals:
+            return
+        file_col = vals[1].strip()
+        if file_col.startswith("—"):
+            return  # DB-only row, no strategy
+
+        tags = self._cmp_tv.item(iid, "tags")
+        current = self._col_strategy.get(file_col) or self._detect_strategy(file_col)
+
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.configure(bg=C["surface"], fg=C["text"],
+                       activebackground=C["mauve"], activeforeground=C["bg"],
+                       font=("Segoe UI", 10))
+        menu.add_command(
+            label=f"Column: {file_col}",
+            state="disabled",
+            font=("Segoe UI", 9, "bold"))
+        menu.add_separator()
+
+        if current != "tail":
+            menu.add_command(
+                label="🎯 Use Tail Truncation (keep last N chars)  ← for ID/code columns",
+                command=lambda: self._set_col_strategy(file_col, "tail"))
+        if current != "head":
+            menu.add_command(
+                label="✂️ Use Head Truncation (keep first N chars) ← for name/text columns",
+                command=lambda: self._set_col_strategy(file_col, "head"))
+
+        if file_col in self._col_strategy:
+            menu.add_separator()
+            menu.add_command(
+                label="↩ Reset to Auto-Detect",
+                command=lambda: self._set_col_strategy(file_col, None))
+
+        # Strategy preview
+        if self._df is not None and file_col in self._df.columns:
+            sk = self._col_map.get(file_col)
+            if sk:
+                limit = self._schema[sk].get("limit")
+                if limit:
+                    # Find first over-limit value for preview
+                    col_data = self._df[file_col].astype(str)
+                    over_vals = col_data[col_data.str.len() > limit]
+                    if len(over_vals) > 0:
+                        sample_val = str(over_vals.iloc[0])
+                        head_fix   = sample_val[:limit]
+                        tail_fix   = sample_val[-limit:]
+                        menu.add_separator()
+                        menu.add_command(
+                            label=f"  Example: '{sample_val[:30]}...' (len={len(sample_val)})",
+                            state="disabled")
+                        menu.add_command(
+                            label=f"  ✂️ Head → '{head_fix}'",
+                            state="disabled")
+                        menu.add_command(
+                            label=f"  🎯 Tail → '{tail_fix}'",
+                            state="disabled")
+
+        menu.add_separator()
+        menu.add_command(
+            label="🔗 Map to Different DB Column...",
+            command=lambda: self._map_column_dialog(file_col)
+                    if "fileonly" in tags else None,
+            state="normal" if "fileonly" in tags else "disabled")
+
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _set_col_strategy(self, file_col, strategy):
+        """Set or clear the truncation strategy for a column and re-scan."""
+        if strategy is None:
+            self._col_strategy.pop(file_col, None)
+            msg = f"'{file_col}' reset to auto-detect"
+        else:
+            self._col_strategy[file_col] = strategy
+            label = "Tail (keep last N chars)" if strategy == "tail" else "Head (keep first N chars)"
+            msg = f"'{file_col}' → {label}"
+        self._rerun_comparison()
+        self._status(f"Strategy updated: {msg}")
 
     def _on_cmp_dblclick(self, event=None):
         """Double-click on schema comparison row:
@@ -1507,6 +1665,7 @@ class TalendAutoFixApp:
             self._cmp_tv.insert("", "end", values=(
                 r["status"], r["file_col"], r["file_max"], r["file_sample"],
                 r["db_col"],  r["db_type"],  r["db_limit"], r["issue_cnt"],
+                r.get("strategy", "—"),
             ), tags=(r["tag"],))
 
         # ── header status ─────────────────────────────────────────────────────
