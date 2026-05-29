@@ -76,7 +76,8 @@ class TalendAutoFixApp:
         self._df          = None    # original DataFrame
         self._fixed_df    = None    # fixed DataFrame
         self._schema      = {}      # {col_lower: {"col": str, "limit": int, "type": str}}
-        self._col_map     = {}      # {file_col: schema_key}
+        self._col_map        = {}   # {file_col: schema_key}  (auto + manual)
+        self._manual_col_map = {}   # {file_col: schema_key}  (user overrides)
         self._issues      = None    # None = not scanned yet; [] = scanned, no issues
         self._change_log  = []      # list of dicts
         self._file_path   = ""
@@ -873,6 +874,11 @@ class TalendAutoFixApp:
                     if alt2 in self._schema:
                         self._col_map[fc] = alt2
 
+        # Apply user-defined manual column overrides (survive re-scans)
+        for fc, sk in self._manual_col_map.items():
+            if sk in self._schema:
+                self._col_map[fc] = sk
+
         if not self._col_map:
             # Surface a clear warning — file cols vs schema cols don't match
             file_cols   = [c.strip() for c in df.columns[:8]]
@@ -941,15 +947,19 @@ class TalendAutoFixApp:
         top_hdr = tk.Frame(top_outer, bg=C["dark"]); top_hdr.pack(fill="x")
         tk.Label(top_hdr,
                  text="📊  Schema Comparison — File Columns vs DB Columns"
-                      "   (click a row to filter issues below)",
+                      "   (click to filter issues · double-click ❓ to map column)",
                  font=("Segoe UI", 9, "bold"),
                  bg=C["dark"], fg=C["blue"]).pack(side="left", padx=10, pady=5)
+        self._btn(top_hdr, "↩ Clear All Mappings",
+                  self._clear_manual_mappings,
+                  C["overlay"], fg=C["text"]).pack(side="right", padx=(0, 8), pady=4)
         # Legend
         for sym, clr, lbl in [
             ("■", "#a6e3a1", " ✅ Within limit "),
             ("■", "#f9e2af", " ⚠️ Over limit   "),
             ("■", "#f38ba8", " ❌ Critical      "),
-            ("■", "#fab387", " ❓ File col, no DB match "),
+            ("■", "#cba6f7", " 🔗 Manual match  "),
+            ("■", "#fab387", " ❓ File col, no DB match (dbl-click to map) "),
             ("■", "#89b4fa", " ℹ️ DB col, not in file  "),
         ]:
             tk.Label(top_hdr, text=sym, fg=clr, bg=C["dark"],
@@ -988,7 +998,9 @@ class TalendAutoFixApp:
         self._cmp_tv.tag_configure("over",     background="#2D0A0A", foreground="#f38ba8")
         self._cmp_tv.tag_configure("fileonly", background="#2a1500", foreground="#fab387")
         self._cmp_tv.tag_configure("dbonly",   background="#0a1030", foreground="#89b4fa")
+        self._cmp_tv.tag_configure("manual",   background="#0f1a2a", foreground="#cba6f7")
         self._cmp_tv.bind("<<TreeviewSelect>>", self._on_cmp_select)
+        self._cmp_tv.bind("<Double-1>",         self._on_cmp_dblclick)
 
         # ╔══════════════════════════════════════════════════════╗
         # ║  BOTTOM PANE — Row-Level Issues                      ║
@@ -1249,13 +1261,16 @@ class TalendAutoFixApp:
             db_limit = sv.get("limit")
             db_type  = sv.get("type", "?")
             db_col   = sv["col"]
+            is_manual = fc in self._manual_col_map
 
             vals = df[fc].astype(str)
             max_len = int(vals.str.len().max()) if len(vals) > 0 else 0
             sample  = str(df[fc].iloc[0])[:60] if len(df) > 0 else ""
             n_issues = issues_map.get(fc, 0)
 
-            if n_issues > 0 and max_len > (db_limit or 0) * 1.2:
+            if is_manual:
+                status, tag = "🔗 Manually mapped", "manual"
+            elif n_issues > 0 and max_len > (db_limit or 0) * 1.2:
                 status, tag = "❌ Critical — values exceed limit", "over"
             elif n_issues > 0:
                 status, tag = "⚠️ Over limit — truncation needed", "near"
@@ -1311,6 +1326,136 @@ class TalendAutoFixApp:
                 "tag":         "dbonly",
             })
         return rows
+
+    def _on_cmp_dblclick(self, event=None):
+        """Double-click on schema comparison row:
+           - If ❓ file-only row: open column-mapping dialog
+           - If 🔗 manual match: offer to remove the mapping
+        """
+        sel = self._cmp_tv.selection()
+        if not sel:
+            return
+        item    = sel[0]
+        tags    = self._cmp_tv.item(item, "tags")
+        vals    = self._cmp_tv.item(item, "values")
+        if not vals:
+            return
+        file_col = vals[1].strip()
+        if "fileonly" in tags:
+            self._map_column_dialog(file_col)
+        elif "manual" in tags:
+            if messagebox.askyesno("Remove Manual Mapping",
+                f"Remove the manual mapping for '{file_col}'?\n\n"
+                "The column will revert to ❓ (no DB match)."):
+                self._manual_col_map.pop(file_col, None)
+                self._rerun_comparison()
+
+    def _map_column_dialog(self, file_col):
+        """Show a dialog to manually map a file column to a DB column."""
+        if not self._schema:
+            messagebox.showwarning("No Schema", "Load a DB schema first."); return
+
+        # DB columns NOT already mapped (to avoid duplicate mappings)
+        already_mapped = set(self._col_map.values())
+        available_db_cols = sorted(
+            [v["col"] for k, v in self._schema.items()
+             if k not in already_mapped or k == self._manual_col_map.get(file_col)],
+            key=str.lower
+        )
+        if not available_db_cols:
+            messagebox.showinfo("No Available Columns",
+                "All DB columns are already mapped to file columns."); return
+
+        # ── build dialog ────────────────────────────────────────────────────
+        dlg = tk.Toplevel(self.root)
+        dlg.title("🔗 Map File Column → DB Column")
+        dlg.configure(bg=C["bg"])
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        # Center dialog
+        dlg.update_idletasks()
+        pw, ph = 540, 310
+        sx = self.root.winfo_x() + (self.root.winfo_width()  - pw) // 2
+        sy = self.root.winfo_y() + (self.root.winfo_height() - ph) // 2
+        dlg.geometry(f"{pw}x{ph}+{sx}+{sy}")
+
+        def lbl(parent, text, bold=False, fg=None):
+            font = ("Segoe UI", 10, "bold") if bold else ("Segoe UI", 10)
+            tk.Label(parent, text=text, font=font,
+                     bg=C["bg"], fg=fg or C["text"]).pack(anchor="w", padx=16, pady=(8, 0))
+
+        lbl(dlg, "File Column (source file):", bold=True)
+        lbl(dlg, f"  {file_col}", fg=C["yellow"])
+
+        # Show some stats for the file column
+        if self._df is not None and file_col in self._df.columns:
+            vals_ser = self._df[file_col].astype(str)
+            max_len  = int(vals_ser.str.len().max())
+            sample   = str(self._df[file_col].iloc[0])[:60] if len(self._df) > 0 else "—"
+            lbl(dlg, f"  Max length: {max_len}   |   Sample: {sample}", fg=C["subtext"])
+
+        lbl(dlg, "Map to DB Column:", bold=True)
+
+        combo_var = tk.StringVar()
+        # Pre-fill if already manually mapped
+        current = self._manual_col_map.get(file_col)
+        if current and current in self._schema:
+            combo_var.set(self._schema[current]["col"])
+
+        combo_frame = tk.Frame(dlg, bg=C["bg"])
+        combo_frame.pack(fill="x", padx=16, pady=4)
+        combo = ttk.Combobox(combo_frame, textvariable=combo_var,
+                             values=available_db_cols, state="readonly",
+                             font=("Segoe UI", 10), width=44)
+        combo.pack(side="left", fill="x", expand=True)
+
+        lbl(dlg, "Tip: Pick the DB column whose type/limit should apply to this file column.",
+            fg=C["subtext"])
+
+        btn_row = tk.Frame(dlg, bg=C["bg"]); btn_row.pack(pady=14)
+
+        def do_map():
+            chosen = combo_var.get().strip()
+            if not chosen:
+                messagebox.showwarning("No Selection", "Please pick a DB column.", parent=dlg)
+                return
+            # Find the schema_key for the chosen db_col name
+            sk = next((k for k, v in self._schema.items()
+                       if v["col"].lower() == chosen.lower()), None)
+            if sk is None:
+                messagebox.showerror("Not Found",
+                    f"DB column '{chosen}' not found in schema.", parent=dlg); return
+            self._manual_col_map[file_col] = sk
+            dlg.destroy()
+            self._rerun_comparison()
+
+        self._btn(btn_row, "🔗 Map & Re-Scan", do_map, C["mauve"]).pack(
+            side="left", padx=8)
+        self._btn(btn_row, "Cancel", dlg.destroy, C["overlay"],
+                  fg=C["text"]).pack(side="left", padx=4)
+
+    def _rerun_comparison(self):
+        """Re-run the scan with the current manual mappings and refresh Tab 2."""
+        if self._df is None:
+            return
+        self._issues  = self._scan(self._df)
+        self._populate_scan_tab(self._df, self._issues)
+        n = len(self._manual_col_map)
+        self._status(f"Re-scanned — {len(self._issues)} issues"
+                     f"  |  {n} manual mapping{'s' if n != 1 else ''} active")
+
+    def _clear_manual_mappings(self):
+        """Remove all user-defined manual column mappings and re-scan."""
+        if not self._manual_col_map:
+            messagebox.showinfo("Nothing to Clear", "No manual mappings are active.")
+            return
+        n = len(self._manual_col_map)
+        if not messagebox.askyesno("Clear Mappings",
+            f"Remove all {n} manual column mapping{'s' if n != 1 else ''}?"):
+            return
+        self._manual_col_map.clear()
+        self._rerun_comparison()
 
     def _on_cmp_select(self, event=None):
         """Filter row-level issues pane when user clicks a schema comparison row."""
