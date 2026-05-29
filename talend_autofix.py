@@ -859,23 +859,34 @@ class TalendAutoFixApp:
 
     # ── Smart Truncation ──────────────────────────────────────────────────────
 
-    _TAIL_PATTERNS = [
-        # exact or suffix matches (column name ends with one of these)
-        "id", "Id", "ID", "code", "Code", "num", "Num", "nbr", "Nbr",
-        "ref", "Ref", "key", "Key", "no", "No", "acct", "Acct",
-        # substring matches inside name
-        "_id", "_code", "_num", "_nbr", "_ref", "_key", "_no", "_acct",
-        "newfin", "finid", "memid", "memno", "mbrno", "account", "npi",
-        "provid", "drugid", "ndcid", "rxcui", "rebate", "formulary",
-        "claimno", "authno", "groupno", "groupid", "planid", "memberid",
-    ]
+    _TAIL_SUFFIXES  = ["_id", "_code", "_num", "_nbr", "_ref", "_key",
+                       "_no", "_acct", "_npi", "_rxcui", "_ndc", "_grp"]
+    _TAIL_EQUALS    = ["id", "code", "num", "nbr", "ref", "key", "no", "acct"]
+    _TAIL_CONTAINS  = ["newfin", "finid", "memid", "memno", "mbrno", "claimno",
+                       "authno", "groupno", "groupid", "planid", "memberid",
+                       "npi", "provid", "drugid", "rebate", "formulary", "rxcui",
+                       "ndcid", "payer", "payid", "clientid", "vendorid",
+                       "contid", "contractid", "enrollid", "subid", "batchid"]
 
     def _detect_strategy(self, col_name):
-        """Return 'tail' for ID/code columns, 'head' for text/name columns."""
+        """Return 'tail' for ID/code columns, 'head' for text/name columns.
+
+        Tail strategy keeps the LAST N characters (strips leading prefixes
+        like 'OR-', 'R', 'RX-' that Talend/upstream systems sometimes add).
+        Head strategy keeps the FIRST N characters (natural for names/descriptions).
+        """
         c = col_name.lower().replace(" ", "_").replace("-", "_")
-        for p in self._TAIL_PATTERNS:
-            p_low = p.lower()
-            if c == p_low or c.endswith("_" + p_low) or c.endswith(p_low):
+
+        # Exact match
+        if c in self._TAIL_EQUALS:
+            return "tail"
+        # Suffix match  (e.g. "newfin_id" ends with "_id")
+        for sfx in self._TAIL_SUFFIXES:
+            if c.endswith(sfx):
+                return "tail"
+        # Substring match (e.g. "claimno_2025" contains "claimno")
+        for sub in self._TAIL_CONTAINS:
+            if sub in c:
                 return "tail"
         return "head"
 
@@ -1175,7 +1186,7 @@ class TalendAutoFixApp:
             bg=C["overlay"], fg=C["green"],
             insertbackground=C["text"], font=("Consolas", 9),
             relief="flat", wrap="word")
-        cur_proposed = iss.get("proposed", iss["original"][:iss["limit"]])
+        cur_proposed = iss.get("proposed") or self._smart_truncate(iss["col"], iss["original"], iss["limit"])[0]
         fix_txt.insert("1.0", cur_proposed)
         fix_txt.pack(fill="both", expand=True, padx=8, pady=(4, 0))
 
@@ -1266,7 +1277,7 @@ class TalendAutoFixApp:
                 for idx2, iss in enumerate(self._issues):
                     fc       = iss["col"]
                     ridx     = iss["row_idx"]
-                    proposed = iss.get("proposed", iss["original"][:iss["limit"]])
+                    proposed = iss.get("proposed") or self._smart_truncate(iss["col"], iss["original"], iss["limit"])[0]
                     df.at[ridx, fc] = proposed
                     changes.append({
                         "row":      iss["row"],
@@ -1645,7 +1656,7 @@ class TalendAutoFixApp:
 
         for idx, iss in filtered:
             mode     = iss.get("mode", "🤖 Auto")
-            proposed = iss.get("proposed", iss["original"][:iss["limit"]])
+            proposed = iss.get("proposed") or self._smart_truncate(iss["col"], iss["original"], iss["limit"])[0]
             if mode == "✏️ Manual":
                 tag = "manual"
             elif iss["over"] > 20:
@@ -1901,17 +1912,22 @@ class TalendAutoFixApp:
             limit    = iss["limit"]
             original = str(df.at[ridx, fc])
 
-            # Honour manual edit; otherwise apply the chosen strategy
+            # Honour manual edit; otherwise apply smart truncation + chosen strategy
             if iss.get("mode") == "✏️ Manual":
-                fixed = iss.get("proposed", original[:limit])
-            elif strategy == "exact":
-                fixed = original[:limit]
-            elif strategy == "buffer":
-                fixed = original[:max(1, limit - buf)]
-            else:  # word boundary
-                trunc = original[:limit]
-                sp    = trunc.rfind(" ")
-                fixed = trunc[:sp] if sp > limit // 2 else trunc
+                fixed = iss.get("proposed", self._smart_truncate(fc, original, limit)[0])
+            else:
+                col_strat = self._col_strategy.get(fc) or self._detect_strategy(fc)
+                if col_strat == "tail":
+                    # ID/code column: always keep tail regardless of strategy selector
+                    fixed = original[-limit:]
+                elif strategy == "exact":
+                    fixed = original[:limit]
+                elif strategy == "buffer":
+                    fixed = original[:max(1, limit - buf)]
+                else:  # word boundary
+                    trunc = original[:limit]
+                    sp    = trunc.rfind(" ")
+                    fixed = trunc[:sp] if sp > limit // 2 else trunc
 
             df.at[ridx, fc] = fixed
             changes.append({
