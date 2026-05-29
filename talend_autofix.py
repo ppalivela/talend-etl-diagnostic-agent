@@ -13,6 +13,8 @@ Version : 1.0
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import os, csv, re, json, threading, queue, io, subprocess, traceback
+import smtplib, urllib.request, urllib.error, base64, time
+from email.message import EmailMessage
 from datetime import datetime
 
 # ── auto-install helper ───────────────────────────────────────────────────────
@@ -86,6 +88,9 @@ class TalendAutoFixApp:
         self._out_path    = ""
         self._fix_running = False
         self._q           = queue.Queue()
+        # pipeline config path
+        self._cfg_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "autofix_pipeline.json")
 
         self._build_styles()
         self._build_header()
@@ -130,20 +135,23 @@ class TalendAutoFixApp:
         self.nb = ttk.Notebook(self.root)
         self.nb.pack(fill="both", expand=True, padx=8, pady=4)
 
-        self.t_load = ttk.Frame(self.nb)
-        self.t_scan = ttk.Frame(self.nb)
-        self.t_fix  = ttk.Frame(self.nb)
-        self.t_log  = ttk.Frame(self.nb)
+        self.t_load     = ttk.Frame(self.nb)
+        self.t_scan     = ttk.Frame(self.nb)
+        self.t_fix      = ttk.Frame(self.nb)
+        self.t_log      = ttk.Frame(self.nb)
+        self.t_reingest = ttk.Frame(self.nb)
 
-        self.nb.add(self.t_load, text="① Load & Schema")
-        self.nb.add(self.t_scan, text="② Compare & Fix")
-        self.nb.add(self.t_fix,  text="③ Auto-Fix & Save")
-        self.nb.add(self.t_log,  text="④ Change Log")
+        self.nb.add(self.t_load,     text="① Load & Schema")
+        self.nb.add(self.t_scan,     text="② Compare & Fix")
+        self.nb.add(self.t_fix,      text="③ Auto-Fix & Save")
+        self.nb.add(self.t_log,      text="④ Change Log")
+        self.nb.add(self.t_reingest, text="⑤ Re-Ingest & Validate")
 
         self._build_tab_load()
         self._build_tab_scan()
         self._build_tab_fix()
         self._build_tab_log()
+        self._build_tab_reingest()
 
     # ── status bar ────────────────────────────────────────────────────────────
     def _build_statusbar(self):
@@ -1296,6 +1304,7 @@ class TalendAutoFixApp:
                 self._change_log = changes
                 self._save_file(df, out_path)
                 self._out_path   = out_path
+                self._q.put(lambda p=out_path: self._deploy_fixed_v.set(p))
                 self._q.put(lambda: self._show_fix_summary(changes, out_path))
                 self._q.put(lambda: self._refresh_log_tab(changes))
                 self._q.put(lambda: self.nb.select(self.t_log))
@@ -1888,6 +1897,8 @@ class TalendAutoFixApp:
                 self._q.put(lambda: self._refresh_log_tab(changes))
                 self._q.put(lambda: self.nb.select(self.t_log))
                 self._out_path = out_path
+                # Update Tab ⑤ fixed file label
+                self._q.put(lambda p=out_path: self._deploy_fixed_v.set(p))
                 self._q.put(lambda: self._status(
                     f"✅ Auto-fix complete — {len(changes)} cells fixed → {os.path.basename(out_path)}"))
             except Exception as ex:
@@ -2100,6 +2111,792 @@ class TalendAutoFixApp:
         path = self._out_path or self._file_path
         if path:
             subprocess.Popen(f'explorer /select,"{path}"')
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # TAB ⑤ — Re-Ingest & Validate  (End-to-End Pipeline)
+    # ════════════════════════════════════════════════════════════════════════════
+
+    _PIPE_STEPS = [
+        ("📄", "Copy fixed file to input folder"),
+        ("📡", "Trigger Talend job via TAC"),
+        ("⏳", "Wait for job completion"),
+        ("🔍", "Validate data in database"),
+        ("📧", "Send confirmation email"),
+    ]
+
+    def _build_tab_reingest(self):
+        tab = self.t_reingest
+
+        # ── vertical split: top=settings, bottom=pipeline log ─────────────────
+        pane = tk.PanedWindow(tab, orient="vertical", sashwidth=7,
+                              bg=C["overlay"], sashrelief="raised")
+        pane.pack(fill="both", expand=True)
+
+        # ╔══════════════════════════════════════════════════════╗
+        # ║  TOP — Settings                                      ║
+        # ╚══════════════════════════════════════════════════════╝
+        top = tk.Frame(pane, bg=C["bg"]); pane.add(top, minsize=320)
+
+        hdr = tk.Frame(top, bg=C["surface"]); hdr.pack(fill="x")
+        tk.Label(hdr, text="⑤  End-to-End Re-Ingestion Pipeline",
+                 font=("Segoe UI", 10, "bold"), bg=C["surface"],
+                 fg=C["yellow"]).pack(side="left", padx=12, pady=7)
+        self._btn(hdr, "💾 Save Settings", self._reingest_save_cfg,
+                  C["overlay"], fg=C["text"]).pack(side="right", padx=(0, 8), pady=5)
+        self._btn(hdr, "📂 Load Settings", self._reingest_load_cfg,
+                  C["overlay"], fg=C["text"]).pack(side="right", padx=(0, 4), pady=5)
+
+        # Scrollable inner frame
+        canvas = tk.Canvas(top, bg=C["bg"], highlightthickness=0)
+        vsb    = ttk.Scrollbar(top, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(canvas, bg=C["bg"])
+        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: canvas.configure(
+            scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(
+            win_id, width=e.width))
+
+        def lf(parent, title):
+            f = tk.LabelFrame(parent, text=f"  {title}  ",
+                              font=("Segoe UI", 9, "bold"),
+                              bg=C["bg"], fg=C["blue"],
+                              relief="groove", bd=1)
+            f.pack(fill="x", padx=12, pady=(8, 0))
+            return f
+
+        def row(parent, r, label, var, show="", width=42):
+            tk.Label(parent, text=label, bg=C["bg"], fg=C["subtext"],
+                     font=("Segoe UI", 9), anchor="e", width=22).grid(
+                row=r, column=0, padx=(10, 4), pady=3, sticky="e")
+            e = tk.Entry(parent, textvariable=var, bg=C["overlay"], fg=C["text"],
+                         insertbackground=C["text"], font=("Consolas", 9),
+                         relief="flat", show=show, width=width)
+            e.grid(row=r, column=1, padx=(0, 10), pady=3, sticky="ew")
+            parent.columnconfigure(1, weight=1)
+            return e
+
+        # ── TAC Connection ─────────────────────────────────────────────────────
+        self._tac_url_v  = tk.StringVar(value="http://tac-server:8080")
+        self._tac_user_v = tk.StringVar(value="admin@company.com")
+        self._tac_pass_v = tk.StringVar()
+        f1 = lf(inner, "📡 TAC Connection  (Talend Administration Console)")
+        row(f1, 0, "TAC URL:",            self._tac_url_v)
+        row(f1, 1, "TAC Username:",       self._tac_user_v)
+        row(f1, 2, "TAC Password:",       self._tac_pass_v, show="●")
+        br1 = tk.Frame(f1, bg=C["bg"]); br1.grid(row=3, column=0, columnspan=2,
+                                                   sticky="w", padx=8, pady=(2, 6))
+        self._btn(br1, "📡 Test TAC Connection", self._tac_test_connection,
+                  C["teal"]).pack(side="left", padx=4)
+        self._tac_status_v = tk.StringVar(value="")
+        tk.Label(br1, textvariable=self._tac_status_v, bg=C["bg"],
+                 font=("Segoe UI", 8), fg=C["subtext"]).pack(side="left", padx=6)
+
+        # ── Job / Task ─────────────────────────────────────────────────────────
+        self._tac_task_id_v  = tk.StringVar()
+        self._tac_job_name_v = tk.StringVar()
+        self._tac_timeout_v  = tk.StringVar(value="30")
+        f2 = lf(inner, "⚙️ Talend Job / Task")
+        row(f2, 0, "TAC Task ID:",        self._tac_task_id_v, width=20)
+        row(f2, 1, "Job Name (label):",   self._tac_job_name_v)
+        row(f2, 2, "Timeout (minutes):",  self._tac_timeout_v, width=8)
+        tk.Label(f2, text="  (Task ID found in TAC → Jobs → right-click job → Properties)",
+                 bg=C["bg"], fg=C["subtext"],
+                 font=("Segoe UI", 8, "italic")).grid(
+            row=3, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 6))
+
+        # ── File Deployment ────────────────────────────────────────────────────
+        self._deploy_folder_v = tk.StringVar()
+        self._deploy_rename_v = tk.StringVar(value="original")
+        f3 = lf(inner, "📁 File Deployment  (where Talend picks up the file)")
+        row(f3, 0, "Input Folder:",       self._deploy_folder_v, width=50)
+        tk.Label(f3, text="", bg=C["bg"]).grid(row=0, column=2)
+        self._btn(f3, "📂", self._browse_deploy_folder,
+                  C["overlay"], fg=C["text"]).grid(
+            row=0, column=2, padx=(2, 10), pady=3)
+
+        tk.Label(f3, text="File naming:", bg=C["bg"], fg=C["subtext"],
+                 font=("Segoe UI", 9), anchor="e", width=22).grid(
+            row=1, column=0, padx=(10, 4), pady=3, sticky="e")
+        rn_frame = tk.Frame(f3, bg=C["bg"])
+        rn_frame.grid(row=1, column=1, sticky="w", pady=3)
+        for val, lbl in [("original", "Keep original filename"),
+                         ("fixed",    "Append _FIXED suffix"),
+                         ("dated",    "Append _YYYYMMDD suffix")]:
+            tk.Radiobutton(rn_frame, text=lbl, variable=self._deploy_rename_v, value=val,
+                           bg=C["bg"], fg=C["text"], selectcolor=C["overlay"],
+                           activebackground=C["bg"], font=("Segoe UI", 9)).pack(
+                side="left", padx=6)
+
+        self._deploy_fixed_v = tk.StringVar(value="(no file fixed yet)")
+        tk.Label(f3, text="Fixed file path:", bg=C["bg"], fg=C["subtext"],
+                 font=("Segoe UI", 9), anchor="e", width=22).grid(
+            row=2, column=0, padx=(10, 4), pady=(0, 6), sticky="e")
+        tk.Label(f3, textvariable=self._deploy_fixed_v, bg=C["bg"],
+                 fg=C["yellow"], font=("Consolas", 9), anchor="w").grid(
+            row=2, column=1, columnspan=2, sticky="w", padx=(0, 10), pady=(0, 6))
+
+        # ── DB Validation ──────────────────────────────────────────────────────
+        self._val_use_tab1_v  = tk.BooleanVar(value=True)
+        self._val_query_v     = tk.StringVar(value="SELECT COUNT(*) FROM [schema].[table]")
+        f4 = lf(inner, "🔍 DB Validation  (runs after job completes)")
+        uc = tk.Checkbutton(f4, text="Use same DB connection as Tab ①",
+                            variable=self._val_use_tab1_v,
+                            command=self._toggle_val_db,
+                            bg=C["bg"], fg=C["text"], selectcolor=C["overlay"],
+                            activebackground=C["bg"], font=("Segoe UI", 9))
+        uc.grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(6, 2))
+
+        tk.Label(f4, text="Validation SQL:", bg=C["bg"], fg=C["subtext"],
+                 font=("Segoe UI", 9), anchor="ne", width=22).grid(
+            row=1, column=0, padx=(10, 4), pady=3, sticky="ne")
+        self._val_sql_text = tk.Text(f4, height=3, width=55,
+                                     bg=C["overlay"], fg=C["text"],
+                                     insertbackground=C["text"],
+                                     font=("Consolas", 9), relief="flat")
+        self._val_sql_text.insert("1.0",
+            "SELECT COUNT(*) AS total_rows FROM [schema].[table]\n"
+            "-- Add more validation queries separated by semicolons")
+        self._val_sql_text.grid(row=1, column=1, columnspan=2,
+                                padx=(0, 10), pady=3, sticky="ew")
+        f4.columnconfigure(1, weight=1)
+        self._btn(f4, "🔍 Test Validation Query",
+                  lambda: self._run_validation_only(),
+                  C["blue"]).grid(row=2, column=1, sticky="w",
+                                  padx=(0, 4), pady=(0, 6))
+
+        # ── Email Notification ─────────────────────────────────────────────────
+        self._email_smtp_v  = tk.StringVar(value="smtp.mhainc.com")
+        self._email_port_v  = tk.StringVar(value="25")
+        self._email_from_v  = tk.StringVar()
+        self._email_to_v    = tk.StringVar()
+        self._email_pass_v  = tk.StringVar()
+        self._email_tls_v   = tk.BooleanVar(value=False)
+        f5 = lf(inner, "📧 Email Notification")
+        row(f5, 0, "SMTP Server:",  self._email_smtp_v, width=35)
+        row(f5, 1, "SMTP Port:",    self._email_port_v, width=8)
+        row(f5, 2, "From address:", self._email_from_v)
+        row(f5, 3, "To address(es):", self._email_to_v)
+        row(f5, 4, "SMTP Password (if required):", self._email_pass_v, show="●")
+        tls_f = tk.Frame(f5, bg=C["bg"]); tls_f.grid(row=5, column=1, sticky="w", pady=3)
+        tk.Checkbutton(tls_f, text="Use STARTTLS (port 587)",
+                       variable=self._email_tls_v,
+                       bg=C["bg"], fg=C["text"], selectcolor=C["overlay"],
+                       activebackground=C["bg"], font=("Segoe UI", 9)).pack(side="left")
+        br5 = tk.Frame(f5, bg=C["bg"]); br5.grid(row=6, column=0, columnspan=3,
+                                                   sticky="w", padx=8, pady=(2, 8))
+        self._btn(br5, "📧 Send Test Email", self._send_test_email,
+                  C["overlay"], fg=C["text"]).pack(side="left", padx=4)
+        self._email_status_v = tk.StringVar(value="")
+        tk.Label(br5, textvariable=self._email_status_v, bg=C["bg"],
+                 font=("Segoe UI", 8), fg=C["subtext"]).pack(side="left", padx=6)
+
+        # ╔══════════════════════════════════════════════════════╗
+        # ║  BOTTOM — Pipeline Execution                         ║
+        # ╚══════════════════════════════════════════════════════╝
+        bot = tk.Frame(pane, bg=C["bg"]); pane.add(bot, minsize=260)
+
+        bot_hdr = tk.Frame(bot, bg=C["surface"]); bot_hdr.pack(fill="x")
+        tk.Label(bot_hdr, text="🚀  Pipeline Execution",
+                 font=("Segoe UI", 10, "bold"), bg=C["surface"],
+                 fg=C["green"]).pack(side="left", padx=12, pady=7)
+        self._btn(bot_hdr, "🚀 Run Full Pipeline",
+                  self._run_full_pipeline, C["green"]).pack(
+            side="right", padx=(0, 8), pady=5)
+        self._btn(bot_hdr, "🔍 Validate DB Only",
+                  self._run_validation_only, C["blue"]).pack(
+            side="right", padx=(0, 4), pady=5)
+        self._btn(bot_hdr, "📄 Copy File Only",
+                  lambda: threading.Thread(target=self._pipeline_copy_only,
+                                           daemon=True).start(),
+                  C["overlay"], fg=C["text"]).pack(side="right", padx=(0, 4), pady=5)
+
+        # Pipeline step indicators
+        steps_f = tk.Frame(bot, bg=C["dark"]); steps_f.pack(fill="x", padx=0)
+        self._pipe_step_vars = []
+        for i, (icon, label) in enumerate(self._PIPE_STEPS):
+            sv = tk.StringVar(value="⬜ Pending")
+            self._pipe_step_vars.append(sv)
+            sf = tk.Frame(steps_f, bg=C["dark"])
+            sf.pack(side="left", padx=16, pady=6)
+            tk.Label(sf, text=f"{icon} {label}", bg=C["dark"], fg=C["subtext"],
+                     font=("Segoe UI", 8)).pack()
+            tk.Label(sf, textvariable=sv, bg=C["dark"], fg=C["text"],
+                     font=("Segoe UI", 9, "bold")).pack()
+
+        # Pipeline log
+        log_f = tk.Frame(bot, bg=C["bg"]); log_f.pack(fill="both", expand=True,
+                                                        padx=8, pady=(4, 4))
+        self._pipe_log = tk.Text(log_f, bg=C["dark"], fg=C["text"],
+                                 font=("Consolas", 9), relief="flat",
+                                 state="disabled", wrap="word")
+        log_sb = ttk.Scrollbar(log_f, orient="vertical", command=self._pipe_log.yview)
+        self._pipe_log.configure(yscrollcommand=log_sb.set)
+        self._pipe_log.pack(side="left", fill="both", expand=True)
+        log_sb.pack(side="right", fill="y")
+        self._pipe_log.tag_configure("info",    foreground="#a6e3a1")
+        self._pipe_log.tag_configure("warn",    foreground="#f9e2af")
+        self._pipe_log.tag_configure("error",   foreground="#f38ba8")
+        self._pipe_log.tag_configure("step",    foreground="#cba6f7",
+                                     font=("Consolas", 9, "bold"))
+        self._pipe_log.tag_configure("ts",      foreground="#585b70")
+
+        # try loading saved settings
+        self._reingest_load_cfg(silent=True)
+
+    def _toggle_val_db(self):
+        pass  # could show/hide custom DB fields in future
+
+    def _browse_deploy_folder(self):
+        folder = filedialog.askdirectory(title="Select Talend Input Folder")
+        if folder:
+            self._deploy_folder_v.set(folder)
+
+    # ── Settings persist ─────────────────────────────────────────────────────
+
+    def _reingest_save_cfg(self):
+        cfg = {
+            "tac_url":        self._tac_url_v.get(),
+            "tac_user":       self._tac_user_v.get(),
+            "tac_pass":       self._tac_pass_v.get(),
+            "tac_task_id":    self._tac_task_id_v.get(),
+            "tac_job_name":   self._tac_job_name_v.get(),
+            "tac_timeout":    self._tac_timeout_v.get(),
+            "deploy_folder":  self._deploy_folder_v.get(),
+            "deploy_rename":  self._deploy_rename_v.get(),
+            "val_use_tab1":   self._val_use_tab1_v.get(),
+            "val_sql":        self._val_sql_text.get("1.0", "end-1c"),
+            "email_smtp":     self._email_smtp_v.get(),
+            "email_port":     self._email_port_v.get(),
+            "email_from":     self._email_from_v.get(),
+            "email_to":       self._email_to_v.get(),
+            "email_tls":      self._email_tls_v.get(),
+        }
+        with open(self._cfg_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+        messagebox.showinfo("✅ Saved", f"Settings saved to:\n{self._cfg_path}")
+
+    def _reingest_load_cfg(self, silent=False):
+        if not os.path.exists(self._cfg_path):
+            if not silent:
+                messagebox.showinfo("No Config", "No saved settings found.")
+            return
+        try:
+            with open(self._cfg_path, encoding="utf-8") as f:
+                cfg = json.load(f)
+            self._tac_url_v.set(cfg.get("tac_url", ""))
+            self._tac_user_v.set(cfg.get("tac_user", ""))
+            self._tac_pass_v.set(cfg.get("tac_pass", ""))
+            self._tac_task_id_v.set(cfg.get("tac_task_id", ""))
+            self._tac_job_name_v.set(cfg.get("tac_job_name", ""))
+            self._tac_timeout_v.set(cfg.get("tac_timeout", "30"))
+            self._deploy_folder_v.set(cfg.get("deploy_folder", ""))
+            self._deploy_rename_v.set(cfg.get("deploy_rename", "original"))
+            self._val_use_tab1_v.set(cfg.get("val_use_tab1", True))
+            sql = cfg.get("val_sql", "")
+            if sql:
+                self._val_sql_text.delete("1.0", "end")
+                self._val_sql_text.insert("1.0", sql)
+            self._email_smtp_v.set(cfg.get("email_smtp", ""))
+            self._email_port_v.set(cfg.get("email_port", "25"))
+            self._email_from_v.set(cfg.get("email_from", ""))
+            self._email_to_v.set(cfg.get("email_to", ""))
+            self._email_tls_v.set(cfg.get("email_tls", False))
+            if not silent:
+                messagebox.showinfo("✅ Loaded", "Settings loaded.")
+        except Exception as ex:
+            if not silent:
+                messagebox.showerror("Load Error", str(ex))
+
+    # ── TAC API ──────────────────────────────────────────────────────────────
+
+    def _tac_call(self, action_json):
+        """Call TAC metaServlet API. Returns parsed JSON response."""
+        tac_url = self._tac_url_v.get().strip().rstrip("/")
+        endpoint = f"{tac_url}/org.talend.administrator/metaServlet"
+        payload  = json.dumps(action_json).encode()
+        encoded  = base64.b64encode(payload).decode()
+        url      = f"{endpoint}?{encoded}"
+        req      = urllib.request.Request(url, method="GET")
+        req.add_header("Accept", "application/json")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+
+    def _tac_test_connection(self):
+        def _run():
+            try:
+                resp = self._tac_call({
+                    "actionName": "getServerInfo",
+                    "authUser":   self._tac_user_v.get(),
+                    "authPass":   self._tac_pass_v.get(),
+                })
+                rc = resp.get("returnCode", -1)
+                if rc == 0:
+                    ver = resp.get("talendVersion", "?")
+                    self._q.put(lambda: self._tac_status_v.set(
+                        f"✅ Connected — TAC v{ver}"))
+                else:
+                    self._q.put(lambda: self._tac_status_v.set(
+                        f"⚠️ TAC error code {rc}: {resp.get('error','unknown')}"))
+            except Exception as ex:
+                self._q.put(lambda: self._tac_status_v.set(f"❌ {ex}"))
+        self._tac_status_v.set("Connecting…")
+        threading.Thread(target=_run, daemon=True).start()
+
+    # ── Pipeline execution ────────────────────────────────────────────────────
+
+    def _plog(self, msg, tag="info"):
+        """Append a timestamped line to the pipeline log."""
+        def _write():
+            self._pipe_log.configure(state="normal")
+            ts = datetime.now().strftime("%H:%M:%S")
+            self._pipe_log.insert("end", f"[{ts}] ", "ts")
+            self._pipe_log.insert("end", msg + "\n", tag)
+            self._pipe_log.see("end")
+            self._pipe_log.configure(state="disabled")
+        self._q.put(_write)
+
+    def _pstep(self, idx, status, tag="info"):
+        """Update a pipeline step indicator."""
+        icons = {"pending": "⬜ Pending", "running": "🔄 Running…",
+                 "ok": "✅ Done", "error": "❌ Failed", "skip": "⏭️ Skipped"}
+        txt = icons.get(status, status)
+        self._q.put(lambda: self._pipe_step_vars[idx].set(txt))
+
+    def _pipe_reset(self):
+        for i in range(len(self._PIPE_STEPS)):
+            self._pstep(i, "pending")
+        def _clr():
+            self._pipe_log.configure(state="normal")
+            self._pipe_log.delete("1.0", "end")
+            self._pipe_log.configure(state="disabled")
+        self._q.put(_clr)
+
+    def _pipeline_copy_only(self):
+        """Copy fixed file to deploy folder only (no TAC, no email)."""
+        self._pipe_reset()
+        self._plog("── Copy File Only mode ──", "step")
+        ok, dst = self._do_copy_file()
+        self._pstep(0, "ok" if ok else "error")
+        if ok:
+            self._plog(f"✅ File placed at: {dst}", "info")
+        for i in range(1, 5):
+            self._pstep(i, "skip")
+
+    def _run_validation_only(self):
+        """Run DB validation query only and show results."""
+        def _run():
+            self._plog("── DB Validation Only mode ──", "step")
+            self._pstep(3, "running")
+            ok, msg = self._do_validate_db()
+            self._pstep(3, "ok" if ok else "error")
+            self._plog(msg, "info" if ok else "error")
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _run_full_pipeline(self):
+        """Run the complete 5-step pipeline in a background thread."""
+        if not self._out_path or not os.path.exists(self._out_path):
+            messagebox.showwarning("No Fixed File",
+                "No fixed file found.\n\n"
+                "Go to Tab ② → click '⚡ Fix All & Save' first, then run the pipeline.")
+            return
+        if not messagebox.askyesno("🚀 Run Full Pipeline",
+                f"This will:\n"
+                f"  1. Copy fixed file to Talend input folder\n"
+                f"  2. Trigger the TAC job\n"
+                f"  3. Wait for job completion\n"
+                f"  4. Validate data in the database\n"
+                f"  5. Send confirmation email\n\n"
+                f"Fixed file: {os.path.basename(self._out_path)}\n\n"
+                f"Proceed?"):
+            return
+
+        # switch to Tab ⑤ so user sees progress
+        self.nb.select(self.t_reingest)
+
+        def _run():
+            self._pipe_reset()
+            summary = {
+                "file_orig":   self._file_path,
+                "file_fixed":  self._out_path,
+                "issues":      self._issues or [],
+                "changes":     self._change_log,
+                "steps":       {},
+                "started":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            self._plog(f"Pipeline started  — {summary['started']}", "step")
+            self._plog(f"Fixed file: {self._out_path}", "info")
+
+            # ── STEP 1: copy file ────────────────────────────────────────────
+            self._plog("", "info")
+            self._plog("STEP 1 — Copy fixed file to input folder", "step")
+            self._pstep(0, "running")
+            ok1, dst = self._do_copy_file()
+            summary["steps"]["copy"] = {"ok": ok1, "dest": dst}
+            self._pstep(0, "ok" if ok1 else "error")
+            if ok1:
+                self._plog(f"✅ Copied to: {dst}", "info")
+            else:
+                self._plog(f"❌ Copy failed: {dst}", "error")
+                self._plog("Pipeline aborted — fix the folder path and retry.", "warn")
+                for i in range(1, 5): self._pstep(i, "skip")
+                self._q.put(lambda: messagebox.showerror("Step 1 Failed",
+                    f"Could not copy file:\n{dst}"))
+                return
+
+            # ── STEP 2: trigger TAC job ──────────────────────────────────────
+            self._plog("", "info")
+            self._plog("STEP 2 — Trigger Talend job via TAC", "step")
+            self._pstep(1, "running")
+            task_id = self._tac_task_id_v.get().strip()
+            exec_id = None
+            if not task_id:
+                self._plog("⚠️ No Task ID configured — skipping TAC trigger", "warn")
+                self._pstep(1, "skip")
+                summary["steps"]["trigger"] = {"ok": False, "skipped": True}
+            else:
+                ok2, exec_id_or_err = self._do_trigger_job(task_id)
+                summary["steps"]["trigger"] = {"ok": ok2, "result": exec_id_or_err}
+                self._pstep(1, "ok" if ok2 else "error")
+                if ok2:
+                    exec_id = exec_id_or_err
+                    self._plog(f"✅ Job triggered — Execution ID: {exec_id}", "info")
+                else:
+                    self._plog(f"❌ Trigger failed: {exec_id_or_err}", "error")
+                    self._plog("Continuing to validation step anyway…", "warn")
+
+            # ── STEP 3: wait for job completion ──────────────────────────────
+            self._plog("", "info")
+            self._plog("STEP 3 — Wait for job completion", "step")
+            self._pstep(2, "running")
+            if not task_id or not exec_id:
+                self._plog("⏭️ Skipped — no TAC execution to monitor", "warn")
+                self._pstep(2, "skip")
+                summary["steps"]["wait"] = {"ok": True, "skipped": True}
+            else:
+                timeout_min = int(self._tac_timeout_v.get() or "30")
+                status, msg = self._do_poll_job(task_id, exec_id, timeout_min)
+                summary["steps"]["wait"] = {"ok": status == "ENDED_OK",
+                                            "status": status}
+                if status == "ENDED_OK":
+                    self._pstep(2, "ok")
+                    self._plog(f"✅ Job completed successfully", "info")
+                elif status == "TIMEOUT":
+                    self._pstep(2, "error")
+                    self._plog(f"❌ Job timed out after {timeout_min} minutes", "error")
+                else:
+                    self._pstep(2, "error")
+                    self._plog(f"❌ Job ended with status: {status}", "error")
+
+            # ── STEP 4: validate DB ───────────────────────────────────────────
+            self._plog("", "info")
+            self._plog("STEP 4 — Validate data in database", "step")
+            self._pstep(3, "running")
+            ok4, val_msg = self._do_validate_db()
+            summary["steps"]["validate"] = {"ok": ok4, "result": val_msg}
+            self._pstep(3, "ok" if ok4 else "error")
+            if ok4:
+                self._plog(f"✅ {val_msg}", "info")
+            else:
+                self._plog(f"⚠️ {val_msg}", "warn")
+
+            # ── STEP 5: send email ────────────────────────────────────────────
+            self._plog("", "info")
+            self._plog("STEP 5 — Send confirmation email", "step")
+            self._pstep(4, "running")
+            summary["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ok5, email_msg = self._do_send_email(summary)
+            summary["steps"]["email"] = {"ok": ok5, "result": email_msg}
+            self._pstep(4, "ok" if ok5 else "error")
+            if ok5:
+                self._plog(f"✅ Email sent to: {self._email_to_v.get()}", "info")
+            else:
+                self._plog(f"❌ Email failed: {email_msg}", "error")
+
+            # ── Done ──────────────────────────────────────────────────────────
+            self._plog("", "info")
+            all_ok = ok1 and ok4
+            if all_ok:
+                self._plog("🎉 PIPELINE COMPLETE — file fixed, deployed, validated!", "step")
+            else:
+                self._plog("⚠️ PIPELINE FINISHED WITH WARNINGS — review log above.", "warn")
+            self._q.put(lambda: self._status(
+                "Pipeline complete" if all_ok else "Pipeline finished with warnings"))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    # ── Step implementations ─────────────────────────────────────────────────
+
+    def _do_copy_file(self):
+        """Copy the fixed file to the deploy folder. Returns (ok, dest_or_error)."""
+        src = self._out_path
+        if not src or not os.path.exists(src):
+            return False, f"Fixed file not found: {src}"
+        folder = self._deploy_folder_v.get().strip()
+        if not folder:
+            return False, "Deploy folder not configured (Tab ⑤ → File Deployment)"
+        if not os.path.isdir(folder):
+            try:
+                os.makedirs(folder, exist_ok=True)
+            except Exception as ex:
+                return False, f"Cannot create folder: {ex}"
+        naming = self._deploy_rename_v.get()
+        orig_name = os.path.basename(self._file_path)
+        base, ext = os.path.splitext(orig_name)
+        if naming == "fixed":
+            fname = f"{base}_FIXED{ext}"
+        elif naming == "dated":
+            fname = f"{base}_{datetime.now().strftime('%Y%m%d')}{ext}"
+        else:
+            fname = orig_name
+        dst = os.path.join(folder, fname)
+        try:
+            import shutil
+            shutil.copy2(src, dst)
+            self._q.put(lambda d=dst: self._deploy_fixed_v.set(d))
+            return True, dst
+        except Exception as ex:
+            return False, str(ex)
+
+    def _do_trigger_job(self, task_id):
+        """Trigger a TAC task. Returns (ok, exec_id_or_error)."""
+        try:
+            resp = self._tac_call({
+                "actionName": "runTask",
+                "taskId":     int(task_id),
+                "authUser":   self._tac_user_v.get(),
+                "authPass":   self._tac_pass_v.get(),
+            })
+            rc = resp.get("returnCode", -1)
+            if rc == 0:
+                exec_id = resp.get("executionId") or resp.get("execId") or "unknown"
+                return True, str(exec_id)
+            else:
+                return False, f"TAC error {rc}: {resp.get('error', resp)}"
+        except Exception as ex:
+            return False, str(ex)
+
+    def _do_poll_job(self, task_id, exec_id, timeout_minutes):
+        """Poll TAC until job completes or times out.
+        Returns (status_str, message)."""
+        deadline = time.time() + timeout_minutes * 60
+        interval = 15  # poll every 15 seconds
+        self._plog(f"  Polling every {interval}s, timeout={timeout_minutes}m…", "info")
+        while time.time() < deadline:
+            try:
+                resp = self._tac_call({
+                    "actionName":  "getTaskExecutionStatus",
+                    "taskId":      int(task_id),
+                    "executionId": exec_id,
+                    "authUser":    self._tac_user_v.get(),
+                    "authPass":    self._tac_pass_v.get(),
+                })
+                status = resp.get("status") or resp.get("executionStatus", "UNKNOWN")
+                self._plog(f"  Job status: {status}", "info")
+                if status in ("ENDED_OK", "ENDED_ERROR", "FAILED",
+                              "KILLED", "UNKNOWN_JOB"):
+                    return status, f"Final status: {status}"
+                # still running — wait
+                for _ in range(interval):
+                    if time.time() >= deadline:
+                        break
+                    time.sleep(1)
+            except Exception as ex:
+                self._plog(f"  Poll error (retrying): {ex}", "warn")
+                time.sleep(interval)
+        return "TIMEOUT", f"Job did not complete within {timeout_minutes} minutes"
+
+    def _do_validate_db(self):
+        """Run validation SQL against the target DB. Returns (ok, message)."""
+        try:
+            if self._val_use_tab1_v.get():
+                # Reuse Tab ① DB connection settings
+                server = self._db_server.get().strip() if hasattr(self, '_db_server') else ""
+                db     = self._db_name.get().strip()   if hasattr(self, '_db_name')   else ""
+                user   = self._db_user.get().strip()   if hasattr(self, '_db_user')   else ""
+                pwd    = self._db_pass.get().strip()   if hasattr(self, '_db_pass')   else ""
+                if not server:
+                    return False, "No DB server configured on Tab ①"
+                conn = self._db_connect(server, db, user, pwd)
+            else:
+                return False, "Custom DB not yet supported — use Tab ① connection"
+
+            sql = self._val_sql_text.get("1.0", "end-1c").strip()
+            # Run only the first statement (up to first semicolon)
+            first_stmt = sql.split(";")[0].strip()
+            if not first_stmt:
+                return False, "No validation SQL entered"
+
+            cursor = conn.cursor()
+            cursor.execute(first_stmt)
+            rows = cursor.fetchall()
+            cols = [d[0] for d in cursor.description] if cursor.description else []
+            conn.close()
+
+            # Format result
+            if rows:
+                lines = []
+                for row in rows[:5]:
+                    lines.append("  " + "  |  ".join(
+                        f"{c}: {v}" for c, v in zip(cols, row)))
+                result = f"Validation passed — {len(rows)} row(s):\n" + "\n".join(lines)
+                return True, result
+            else:
+                return True, "Query returned no rows (table may be empty or loading)"
+
+        except Exception as ex:
+            return False, f"Validation error: {ex}"
+
+    def _build_email_html(self, summary):
+        """Build an HTML confirmation email body."""
+        changes   = summary.get("changes", [])
+        issues    = summary.get("issues", [])
+        file_orig = os.path.basename(summary.get("file_orig", "?"))
+        file_fix  = summary.get("file_fixed", "?")
+        started   = summary.get("started", "?")
+        finished  = summary.get("finished", "?")
+        n_fixed   = len(changes)
+        job_name  = self._tac_job_name_v.get() or self._tac_task_id_v.get() or "N/A"
+        val_result= summary.get("steps", {}).get("validate", {}).get("result", "N/A")
+        deployed  = summary.get("steps", {}).get("copy", {}).get("dest", "N/A")
+
+        # Column summary table
+        col_counts = {}
+        for c in changes:
+            col_counts[c["col"]] = col_counts.get(c["col"], 0) + 1
+        col_rows = "".join(
+            f"<tr><td style='padding:4px 12px;border:1px solid #444'>{col}</td>"
+            f"<td style='padding:4px 12px;border:1px solid #444;text-align:center'>{cnt}</td></tr>"
+            for col, cnt in sorted(col_counts.items(), key=lambda x: -x[1]))
+
+        steps_html = ""
+        step_labels = [s[1] for s in self._PIPE_STEPS]
+        for label, (key, _ok_key) in zip(step_labels, [
+                ("copy","ok"),("trigger","ok"),("wait","ok"),
+                ("validate","ok"),("email","ok")]):
+            info = summary.get("steps", {}).get(key, {})
+            icon = "✅" if info.get("ok") else ("⏭️" if info.get("skipped") else "❌")
+            steps_html += (
+                f"<tr><td style='padding:4px 12px;border:1px solid #444'>{icon}</td>"
+                f"<td style='padding:4px 12px;border:1px solid #444'>{label}</td></tr>")
+
+        return f"""<!DOCTYPE html>
+<html><body style="font-family:Segoe UI,Arial,sans-serif;background:#1e1e2e;color:#cdd6f4;margin:0;padding:0">
+<div style="max-width:700px;margin:20px auto;background:#313244;border-radius:8px;overflow:hidden">
+  <div style="background:#1e6b3a;padding:20px 24px">
+    <h2 style="margin:0;color:#a6e3a1">✅ Talend Re-Ingestion Complete</h2>
+    <p style="margin:6px 0 0;color:#d9f7de;font-size:13px">MHA Inc. — Talend ETL Auto-Fix Agent</p>
+  </div>
+  <div style="padding:20px 24px">
+    <table style="border-collapse:collapse;width:100%;margin-bottom:16px">
+      <tr><td style="padding:4px 12px;border:1px solid #444;color:#89b4fa;font-weight:bold">Source File</td>
+          <td style="padding:4px 12px;border:1px solid #444">{file_orig}</td></tr>
+      <tr><td style="padding:4px 12px;border:1px solid #444;color:#89b4fa;font-weight:bold">Fixed File Placed At</td>
+          <td style="padding:4px 12px;border:1px solid #444">{deployed}</td></tr>
+      <tr><td style="padding:4px 12px;border:1px solid #444;color:#89b4fa;font-weight:bold">Talend Job</td>
+          <td style="padding:4px 12px;border:1px solid #444">{job_name}</td></tr>
+      <tr><td style="padding:4px 12px;border:1px solid #444;color:#89b4fa;font-weight:bold">Cells Fixed</td>
+          <td style="padding:4px 12px;border:1px solid #444"><strong style="color:#a6e3a1">{n_fixed}</strong></td></tr>
+      <tr><td style="padding:4px 12px;border:1px solid #444;color:#89b4fa;font-weight:bold">Pipeline Started</td>
+          <td style="padding:4px 12px;border:1px solid #444">{started}</td></tr>
+      <tr><td style="padding:4px 12px;border:1px solid #444;color:#89b4fa;font-weight:bold">Pipeline Finished</td>
+          <td style="padding:4px 12px;border:1px solid #444">{finished}</td></tr>
+    </table>
+
+    <h3 style="color:#cba6f7;margin:16px 0 8px">Columns Fixed (Truncation)</h3>
+    <table style="border-collapse:collapse;width:100%;margin-bottom:16px">
+      <tr style="background:#45475a">
+        <th style="padding:6px 12px;border:1px solid #444;text-align:left">Column</th>
+        <th style="padding:6px 12px;border:1px solid #444;text-align:center">Cells Fixed</th>
+      </tr>{col_rows}
+    </table>
+
+    <h3 style="color:#cba6f7;margin:16px 0 8px">Pipeline Steps</h3>
+    <table style="border-collapse:collapse;width:100%;margin-bottom:16px">
+      <tr style="background:#45475a">
+        <th style="padding:6px 12px;border:1px solid #444;text-align:center;width:40px">Status</th>
+        <th style="padding:6px 12px;border:1px solid #444;text-align:left">Step</th>
+      </tr>{steps_html}
+    </table>
+
+    <h3 style="color:#cba6f7;margin:16px 0 8px">DB Validation Result</h3>
+    <pre style="background:#1e1e2e;padding:12px;border-radius:4px;
+                font-size:12px;overflow-x:auto">{val_result}</pre>
+
+    <p style="color:#6c7086;font-size:11px;margin-top:20px;border-top:1px solid #45475a;padding-top:10px">
+      Generated by Talend Auto-Fix Agent — MHA Inc. ETL Team<br>
+      Do not reply to this email.
+    </p>
+  </div>
+</div>
+</body></html>"""
+
+    def _do_send_email(self, summary):
+        """Send confirmation email. Returns (ok, message)."""
+        smtp_server = self._email_smtp_v.get().strip()
+        smtp_port   = int(self._email_port_v.get() or "25")
+        from_addr   = self._email_from_v.get().strip()
+        to_addr     = self._email_to_v.get().strip()
+        use_tls     = self._email_tls_v.get()
+        email_pass  = self._email_pass_v.get().strip()
+
+        if not smtp_server or not from_addr or not to_addr:
+            return False, "Email not configured (SMTP, From, or To is empty)"
+
+        try:
+            file_orig = os.path.basename(summary.get("file_orig", "?"))
+            n_fixed   = len(summary.get("changes", []))
+            job_name  = self._tac_job_name_v.get() or self._tac_task_id_v.get() or "Talend Job"
+
+            msg = EmailMessage()
+            msg["Subject"] = (
+                f"✅ Talend Re-Ingestion Complete — {file_orig} "
+                f"({n_fixed} cells fixed) — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+            msg["From"]    = from_addr
+            msg["To"]      = to_addr
+            html_body      = self._build_email_html(summary)
+            msg.set_content(
+                f"Talend Re-Ingestion Complete\n"
+                f"File: {file_orig}\n"
+                f"Cells fixed: {n_fixed}\n"
+                f"Job: {job_name}\n"
+                f"See HTML version for full details.",
+                subtype="plain")
+            msg.add_alternative(html_body, subtype="html")
+
+            with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as s:
+                s.ehlo()
+                if use_tls:
+                    s.starttls()
+                    s.ehlo()
+                if email_pass:
+                    s.login(from_addr, email_pass)
+                s.send_message(msg)
+            return True, f"Sent to {to_addr}"
+        except Exception as ex:
+            return False, str(ex)
+
+    def _send_test_email(self):
+        """Send a test email to verify SMTP settings."""
+        def _run():
+            self._email_status_v.set("Sending…")
+            test_summary = {
+                "file_orig":  "test_file.xlsx",
+                "file_fixed": "(test run)",
+                "issues":     [],
+                "changes":    [],
+                "steps":      {},
+                "started":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "finished":   datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            ok, msg = self._do_send_email(test_summary)
+            if ok:
+                self._q.put(lambda: self._email_status_v.set("✅ Test email sent!"))
+            else:
+                self._q.put(lambda: self._email_status_v.set(f"❌ {msg}"))
+        threading.Thread(target=_run, daemon=True).start()
 
 
 # ── entry point ───────────────────────────────────────────────────────────────
