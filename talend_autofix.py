@@ -488,29 +488,19 @@ class TalendAutoFixApp:
     def _db_get_all_tables(self, server, db, user, pwd):
         if not pyodbc:
             raise RuntimeError("pyodbc not installed")
-        drivers = [d for d in pyodbc.drivers() if "SQL Server" in d]
-        if not drivers:
-            raise RuntimeError("No SQL Server ODBC driver found")
-        driver = next((d for d in drivers if "17" in d), drivers[0])
-        cs = (f"DRIVER={{{driver}}};SERVER={server};DATABASE={db};"
-              f"UID={user};PWD={pwd};TrustServerCertificate=yes") if user else (
-              f"DRIVER={{{driver}}};SERVER={server};DATABASE={db};"
-              f"Trusted_Connection=yes;TrustServerCertificate=yes")
-        conn = pyodbc.connect(cs, timeout=15)
+        conn = self._db_connect(server, db, user, pwd)
         cur  = conn.cursor()
-        # Get all user tables with column counts
+        # sys catalog is 10-50x faster than INFORMATION_SCHEMA on large DBs
         cur.execute("""
             SELECT
-                t.TABLE_SCHEMA,
-                t.TABLE_NAME,
-                COUNT(c.COLUMN_NAME) AS COL_COUNT
-            FROM INFORMATION_SCHEMA.TABLES t
-            LEFT JOIN INFORMATION_SCHEMA.COLUMNS c
-                ON t.TABLE_SCHEMA = c.TABLE_SCHEMA
-               AND t.TABLE_NAME   = c.TABLE_NAME
-            WHERE t.TABLE_TYPE = 'BASE TABLE'
-            GROUP BY t.TABLE_SCHEMA, t.TABLE_NAME
-            ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
+                s.name          AS schema_name,
+                t.name          AS table_name,
+                COUNT(c.column_id) AS col_count
+            FROM sys.tables  t
+            JOIN sys.schemas s ON t.schema_id = s.schema_id
+            JOIN sys.columns c ON t.object_id = c.object_id
+            GROUP BY s.name, t.name
+            ORDER BY s.name, t.name
         """)
         rows = [(r[0], r[1], r[2]) for r in cur.fetchall()]
         conn.close()
@@ -564,20 +554,28 @@ class TalendAutoFixApp:
     def _db_get_columns(self, server, db, schema, table, user, pwd):
         if not pyodbc:
             raise RuntimeError("pyodbc not installed")
-        drivers = [d for d in pyodbc.drivers() if "SQL Server" in d]
-        driver  = next((d for d in drivers if "17" in d), drivers[0])
-        cs = (f"DRIVER={{{driver}}};SERVER={server};DATABASE={db};"
-              f"UID={user};PWD={pwd};TrustServerCertificate=yes") if user else (
-              f"DRIVER={{{driver}}};SERVER={server};DATABASE={db};"
-              f"Trusted_Connection=yes;TrustServerCertificate=yes")
-        conn = pyodbc.connect(cs, timeout=15)
+        conn = self._db_connect(server, db, user, pwd)
         cur  = conn.cursor()
+        # sys.columns + sys.types is much faster than INFORMATION_SCHEMA.COLUMNS
         cur.execute("""
-            SELECT COLUMN_NAME, DATA_TYPE,
-                   CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA=? AND TABLE_NAME=?
-            ORDER BY ORDINAL_POSITION
+            SELECT
+                c.name                              AS col_name,
+                tp.name                             AS type_name,
+                CASE
+                    WHEN tp.name IN ('nvarchar','nchar') AND c.max_length = -1 THEN -1
+                    WHEN tp.name IN ('nvarchar','nchar')                        THEN c.max_length / 2
+                    WHEN tp.name IN ('varchar','char','binary','varbinary')
+                         AND c.max_length = -1                                 THEN -1
+                    WHEN tp.name IN ('varchar','char','binary','varbinary')     THEN c.max_length
+                    ELSE NULL
+                END                                 AS char_limit,
+                CASE c.is_nullable WHEN 1 THEN 'YES' ELSE 'NO' END AS nullable
+            FROM sys.columns  c
+            JOIN sys.types    tp ON c.user_type_id = tp.user_type_id
+            JOIN sys.tables   t  ON c.object_id    = t.object_id
+            JOIN sys.schemas  s  ON t.schema_id    = s.schema_id
+            WHERE s.name = ? AND t.name = ?
+            ORDER BY c.column_id
         """, schema, table)
         rows = [(r[0], r[1], r[2], r[3]) for r in cur.fetchall()]
         conn.close()
@@ -623,26 +621,27 @@ class TalendAutoFixApp:
     def _db_fetch(self, server, db, table, user, pwd):
         if not pyodbc:
             raise RuntimeError("pyodbc not installed")
-        drivers = [d for d in pyodbc.drivers() if "SQL Server" in d]
-        if not drivers:
-            raise RuntimeError("No SQL Server ODBC driver found")
-        driver = next((d for d in drivers if "17" in d), drivers[0])
-
-        if user:
-            cs = (f"DRIVER={{{driver}}};SERVER={server};DATABASE={db};"
-                  f"UID={user};PWD={pwd};TrustServerCertificate=yes")
-        else:
-            cs = (f"DRIVER={{{driver}}};SERVER={server};DATABASE={db};"
-                  f"Trusted_Connection=yes;TrustServerCertificate=yes")
-
-        conn = pyodbc.connect(cs, timeout=15)
+        conn = self._db_connect(server, db, user, pwd)
         cur  = conn.cursor()
         sch, tbl = ("dbo", table) if "." not in table else table.split(".", 1)
         cur.execute("""
-            SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA=? AND TABLE_NAME=?
-            ORDER BY ORDINAL_POSITION
+            SELECT
+                c.name                              AS col_name,
+                tp.name                             AS type_name,
+                CASE
+                    WHEN tp.name IN ('nvarchar','nchar') AND c.max_length = -1 THEN -1
+                    WHEN tp.name IN ('nvarchar','nchar')                        THEN c.max_length / 2
+                    WHEN tp.name IN ('varchar','char','binary','varbinary')
+                         AND c.max_length = -1                                 THEN -1
+                    WHEN tp.name IN ('varchar','char','binary','varbinary')     THEN c.max_length
+                    ELSE NULL
+                END AS char_limit
+            FROM sys.columns  c
+            JOIN sys.types    tp ON c.user_type_id = tp.user_type_id
+            JOIN sys.tables   t  ON c.object_id    = t.object_id
+            JOIN sys.schemas  s  ON t.schema_id    = s.schema_id
+            WHERE s.name = ? AND t.name = ?
+            ORDER BY c.column_id
         """, sch, tbl)
         result = {}
         for col, dtype, ml in cur.fetchall():
@@ -650,6 +649,24 @@ class TalendAutoFixApp:
             result[col.lower()] = {"col": col, "limit": lim, "type": dtype}
         conn.close()
         return result
+
+    def _db_connect(self, server, db, user, pwd):
+        """Shared fast connection helper using sys catalog-friendly settings."""
+        if not pyodbc:
+            raise RuntimeError("pyodbc not installed")
+        drivers = [d for d in pyodbc.drivers() if "SQL Server" in d]
+        if not drivers:
+            raise RuntimeError("No SQL Server ODBC driver found on this machine")
+        driver = next((d for d in drivers if "17" in d), drivers[0])
+        if user:
+            cs = (f"DRIVER={{{driver}}};SERVER={server};DATABASE={db};"
+                  f"UID={user};PWD={pwd};TrustServerCertificate=yes;"
+                  f"ApplicationIntent=ReadOnly")
+        else:
+            cs = (f"DRIVER={{{driver}}};SERVER={server};DATABASE={db};"
+                  f"Trusted_Connection=yes;TrustServerCertificate=yes;"
+                  f"ApplicationIntent=ReadOnly")
+        return pyodbc.connect(cs, timeout=10)
 
     def _parse_schema_only(self):
         try:
