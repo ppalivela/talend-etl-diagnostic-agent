@@ -235,7 +235,9 @@ class TalendAutoFixApp:
 
         # DB frame
         f_db = tk.Frame(slf, bg=C["surface"])
-        db1 = tk.Frame(f_db, bg=C["surface"]); db1.pack(fill="x", padx=8, pady=4)
+
+        # ── Row 1: Profile ───────────────────────────────────────────────────
+        db1 = tk.Frame(f_db, bg=C["surface"]); db1.pack(fill="x", padx=8, pady=(6, 2))
         tk.Label(db1, text="Profile:", bg=C["surface"], fg=C["subtext"],
                  font=("Segoe UI", 9)).pack(side="left")
         self._db_prof = tk.StringVar(value=list(MHA_PROFILES.keys())[0])
@@ -243,35 +245,115 @@ class TalendAutoFixApp:
                      width=36, state="readonly").pack(side="left", padx=4)
         self._db_prof.trace("w", lambda *_: self._fill_db_profile())
 
+        # ── Row 2: Server / Database / Browse button ─────────────────────────
         db2 = tk.Frame(f_db, bg=C["surface"]); db2.pack(fill="x", padx=8, pady=2)
         self._db_server = tk.StringVar(); self._db_name = tk.StringVar()
         self._db_table  = tk.StringVar(); self._db_user = tk.StringVar()
         self._db_pass   = tk.StringVar()
-        for lbl, var, w, show in [
-            ("Server:", self._db_server, 20, ""),
-            ("Database:", self._db_name, 18, ""),
-            ("Table:", self._db_table, 18, ""),
-        ]:
+        for lbl, var, w in [("Server:", self._db_server, 22), ("Database:", self._db_name, 20)]:
             tk.Label(db2, text=lbl, bg=C["surface"], fg=C["subtext"],
-                     font=("Segoe UI", 9)).pack(side="left", padx=(8, 2))
-            tk.Entry(db2, textvariable=var, width=w, show=show,
+                     font=("Segoe UI", 9)).pack(side="left", padx=(6, 2))
+            tk.Entry(db2, textvariable=var, width=w,
                      bg=C["overlay"], fg=C["text"], insertbackground=C["text"],
                      font=("Consolas", 9), relief="flat").pack(side="left", padx=(0, 4), ipady=3)
+        self._btn(db2, "🔍 Browse All Tables", self._browse_tables,
+                  C["blue"], padx=10).pack(side="left", padx=8)
 
+        # ── Row 3: User / Password / Fetch Schema ────────────────────────────
         db3 = tk.Frame(f_db, bg=C["surface"]); db3.pack(fill="x", padx=8, pady=2)
-        for lbl, var, w, show in [
-            ("User:", self._db_user, 18, ""),
-            ("Password:", self._db_pass, 18, "*"),
-        ]:
+        for lbl, var, w, show in [("User:", self._db_user, 18, ""),
+                                    ("Password:", self._db_pass, 18, "*")]:
             tk.Label(db3, text=lbl, bg=C["surface"], fg=C["subtext"],
-                     font=("Segoe UI", 9)).pack(side="left", padx=(8, 2))
+                     font=("Segoe UI", 9)).pack(side="left", padx=(6, 2))
             tk.Entry(db3, textvariable=var, width=w, show=show,
                      bg=C["overlay"], fg=C["text"], insertbackground=C["text"],
                      font=("Consolas", 9), relief="flat").pack(side="left", padx=(0, 4), ipady=3)
-        self._btn(db3, "🔌 Fetch Schema", self._fetch_db_schema, C["teal"]).pack(side="left", padx=12)
-        self._db_sv = tk.StringVar(value="")
+        tk.Label(db3, text="Table:", bg=C["surface"], fg=C["subtext"],
+                 font=("Segoe UI", 9)).pack(side="left", padx=(12, 2))
+        tk.Entry(db3, textvariable=self._db_table, width=22,
+                 bg=C["overlay"], fg=C["yellow"], insertbackground=C["text"],
+                 font=("Consolas", 9, "bold"), relief="flat").pack(side="left", padx=(0, 4), ipady=3)
+        self._btn(db3, "✅ Load Schema", self._fetch_db_schema, C["teal"]).pack(side="left", padx=6)
+
+        # ── Status line ──────────────────────────────────────────────────────
+        self._db_sv = tk.StringVar(value="Enter server & database, then click 'Browse All Tables'.")
         tk.Label(f_db, textvariable=self._db_sv, bg=C["surface"], fg=C["yellow"],
-                 font=("Consolas", 9)).pack(anchor="w", padx=8, pady=(0, 4))
+                 font=("Consolas", 9)).pack(anchor="w", padx=8, pady=(2, 4))
+
+        # ── Table Browser panel ──────────────────────────────────────────────
+        browser_lf = tk.LabelFrame(f_db,
+            text="  📋  All Tables in Database — click a table to select it  ",
+            font=("Segoe UI", 9, "bold"), bg=C["surface"], fg=C["subtext"], relief="flat")
+        browser_lf.pack(fill="both", expand=True, padx=8, pady=(2, 6))
+
+        # Filter bar
+        frow = tk.Frame(browser_lf, bg=C["surface"]); frow.pack(fill="x", padx=6, pady=4)
+        tk.Label(frow, text="🔎 Filter:", bg=C["surface"], fg=C["subtext"],
+                 font=("Segoe UI", 9)).pack(side="left")
+        self._tbl_filter_v = tk.StringVar()
+        self._tbl_filter_v.trace("w", lambda *_: self._filter_tables())
+        tk.Entry(frow, textvariable=self._tbl_filter_v, width=30,
+                 bg=C["overlay"], fg=C["text"], insertbackground=C["text"],
+                 font=("Consolas", 9), relief="flat").pack(side="left", padx=(4, 16), ipady=3)
+        self._tbl_count_v = tk.StringVar(value="No tables loaded.")
+        tk.Label(frow, textvariable=self._tbl_count_v, bg=C["surface"],
+                 fg=C["subtext"], font=("Segoe UI", 8)).pack(side="left")
+        self._btn(frow, "🔄 Refresh", self._browse_tables,
+                  C["overlay"], fg=C["text"], padx=8).pack(side="right")
+
+        # Split: table list (left) + column preview (right)
+        split = tk.Frame(browser_lf, bg=C["surface"]); split.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        split.columnconfigure(0, weight=2); split.columnconfigure(1, weight=3)
+        split.rowconfigure(0, weight=1)
+
+        # Table list
+        tl_frame = tk.Frame(split, bg=C["bg"]); tl_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        tl_frame.rowconfigure(0, weight=1); tl_frame.columnconfigure(0, weight=1)
+        tl_cols = ("schema", "table", "cols")
+        self._tbl_tv = ttk.Treeview(tl_frame, columns=tl_cols, show="headings",
+                                     selectmode="browse", height=8)
+        for c, lbl, w in [("schema", "Schema", 70), ("table", "Table Name", 200), ("cols", "Cols", 45)]:
+            self._tbl_tv.heading(c, text=lbl)
+            self._tbl_tv.column(c, width=w, minwidth=30)
+        tl_vsb = ttk.Scrollbar(tl_frame, orient="vertical", command=self._tbl_tv.yview)
+        self._tbl_tv.configure(yscrollcommand=tl_vsb.set)
+        self._tbl_tv.grid(row=0, column=0, sticky="nsew")
+        tl_vsb.grid(row=0, column=1, sticky="ns")
+        self._tbl_tv.tag_configure("selected_tbl", background="#1a2a4a", foreground=C["blue"])
+        self._tbl_tv.bind("<<TreeviewSelect>>", self._on_table_click)
+
+        # Column preview (right side)
+        cp_frame = tk.Frame(split, bg=C["bg"]); cp_frame.grid(row=0, column=1, sticky="nsew")
+        cp_frame.rowconfigure(0, weight=1); cp_frame.columnconfigure(0, weight=1)
+        cp_hdr = tk.Frame(cp_frame, bg=C["surface"]); cp_hdr.pack(fill="x")
+        self._col_prev_v = tk.StringVar(value="← Click a table to preview its columns")
+        tk.Label(cp_hdr, textvariable=self._col_prev_v, bg=C["surface"],
+                 fg=C["teal"], font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=6, pady=3)
+        col_cols = ("col", "type", "maxlen", "nullable")
+        self._col_tv = ttk.Treeview(cp_frame, columns=col_cols, show="headings",
+                                     selectmode="none", height=8)
+        for c, lbl, w in [("col", "Column Name", 180), ("type", "Data Type", 110),
+                           ("maxlen", "Max Len", 70), ("nullable", "Nullable", 65)]:
+            self._col_tv.heading(c, text=lbl)
+            self._col_tv.column(c, width=w, minwidth=40)
+        cp_vsb = ttk.Scrollbar(cp_frame, orient="vertical", command=self._col_tv.yview)
+        self._col_tv.configure(yscrollcommand=cp_vsb.set)
+        cp_inner = tk.Frame(cp_frame, bg=C["bg"]); cp_inner.pack(fill="both", expand=True)
+        cp_inner.rowconfigure(0, weight=1); cp_inner.columnconfigure(0, weight=1)
+        self._col_tv = ttk.Treeview(cp_inner, columns=col_cols, show="headings",
+                                     selectmode="none", height=8)
+        for c, lbl, w in [("col", "Column Name", 180), ("type", "Data Type", 110),
+                           ("maxlen", "Max Len", 70), ("nullable", "Nullable", 65)]:
+            self._col_tv.heading(c, text=lbl)
+            self._col_tv.column(c, width=w, minwidth=40)
+        cp_vsb2 = ttk.Scrollbar(cp_inner, orient="vertical", command=self._col_tv.yview)
+        self._col_tv.configure(yscrollcommand=cp_vsb2.set)
+        self._col_tv.grid(row=0, column=0, sticky="nsew")
+        cp_vsb2.grid(row=0, column=1, sticky="ns")
+        self._col_tv.tag_configure("haslimit",  background="#1a2a1a", foreground=C["green"])
+        self._col_tv.tag_configure("nolimit",   background=C["surface"], foreground=C["subtext"])
+
+        self._all_tables   = []   # [(schema, table, col_count)]
         self._schema_frames["DB"] = f_db
 
         # Manual frame
@@ -375,6 +457,143 @@ class TalendAutoFixApp:
         if p.get("auth") == "sql":
             self._db_user.set(p.get("user", ""))
 
+    # ── browse all tables ─────────────────────────────────────────────────────
+    def _browse_tables(self):
+        server = self._db_server.get().strip()
+        db     = self._db_name.get().strip()
+        user   = self._db_user.get().strip()
+        pwd    = self._db_pass.get().strip()
+        if not server:
+            messagebox.showwarning("Missing Info", "Enter Server name first."); return
+
+        def _run():
+            self._q.put(self._prog_start)
+            self._q.put(lambda: self._db_sv.set(f"Connecting to {server}…"))
+            try:
+                tables = self._db_get_all_tables(server, db, user, pwd)
+                self._all_tables = tables
+                self._q.put(lambda: self._populate_table_browser(tables))
+                self._q.put(lambda: self._db_sv.set(
+                    f"✅  Connected — {len(tables)} tables in {server}/{db}"))
+                self._q.put(lambda: self._tbl_count_v.set(
+                    f"{len(tables)} tables found"))
+            except Exception as ex:
+                self._q.put(lambda: self._db_sv.set(f"❌  {ex}"))
+                self._q.put(lambda: messagebox.showerror("Connection Error", str(ex)))
+            finally:
+                self._q.put(self._prog_stop)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _db_get_all_tables(self, server, db, user, pwd):
+        if not pyodbc:
+            raise RuntimeError("pyodbc not installed")
+        drivers = [d for d in pyodbc.drivers() if "SQL Server" in d]
+        if not drivers:
+            raise RuntimeError("No SQL Server ODBC driver found")
+        driver = next((d for d in drivers if "17" in d), drivers[0])
+        cs = (f"DRIVER={{{driver}}};SERVER={server};DATABASE={db};"
+              f"UID={user};PWD={pwd};TrustServerCertificate=yes") if user else (
+              f"DRIVER={{{driver}}};SERVER={server};DATABASE={db};"
+              f"Trusted_Connection=yes;TrustServerCertificate=yes")
+        conn = pyodbc.connect(cs, timeout=15)
+        cur  = conn.cursor()
+        # Get all user tables with column counts
+        cur.execute("""
+            SELECT
+                t.TABLE_SCHEMA,
+                t.TABLE_NAME,
+                COUNT(c.COLUMN_NAME) AS COL_COUNT
+            FROM INFORMATION_SCHEMA.TABLES t
+            LEFT JOIN INFORMATION_SCHEMA.COLUMNS c
+                ON t.TABLE_SCHEMA = c.TABLE_SCHEMA
+               AND t.TABLE_NAME   = c.TABLE_NAME
+            WHERE t.TABLE_TYPE = 'BASE TABLE'
+            GROUP BY t.TABLE_SCHEMA, t.TABLE_NAME
+            ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
+        """)
+        rows = [(r[0], r[1], r[2]) for r in cur.fetchall()]
+        conn.close()
+        return rows
+
+    def _populate_table_browser(self, tables):
+        self._tbl_tv.delete(*self._tbl_tv.get_children())
+        self._tbl_filter_v.set("")
+        for schema, tbl, cnt in tables:
+            self._tbl_tv.insert("", "end", iid=f"{schema}.{tbl}",
+                                values=(schema, tbl, cnt))
+        self._tbl_count_v.set(f"{len(tables)} tables  (click to select)")
+
+    def _filter_tables(self):
+        q = self._tbl_filter_v.get().lower().strip()
+        self._tbl_tv.delete(*self._tbl_tv.get_children())
+        filtered = [r for r in self._all_tables
+                    if q in r[0].lower() or q in r[1].lower()] if q else self._all_tables
+        for schema, tbl, cnt in filtered:
+            self._tbl_tv.insert("", "end", iid=f"{schema}.{tbl}",
+                                values=(schema, tbl, cnt))
+        self._tbl_count_v.set(f"{len(filtered)} / {len(self._all_tables)} tables")
+
+    def _on_table_click(self, event=None):
+        sel = self._tbl_tv.selection()
+        if not sel:
+            return
+        vals = self._tbl_tv.item(sel[0], "values")
+        if not vals:
+            return
+        schema, tbl, col_cnt = vals
+        # Auto-fill the Table field
+        self._db_table.set(f"{schema}.{tbl}")
+        self._col_prev_v.set(
+            f"📋  {schema}.{tbl}  —  {col_cnt} columns  (loading…)")
+        # Load column details in background
+        server = self._db_server.get().strip()
+        db     = self._db_name.get().strip()
+        user   = self._db_user.get().strip()
+        pwd    = self._db_pass.get().strip()
+
+        def _run():
+            try:
+                cols = self._db_get_columns(server, db, schema, tbl, user, pwd)
+                self._q.put(lambda: self._populate_col_preview(schema, tbl, cols))
+            except Exception as ex:
+                self._q.put(lambda: self._col_prev_v.set(f"❌ {ex}"))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _db_get_columns(self, server, db, schema, table, user, pwd):
+        if not pyodbc:
+            raise RuntimeError("pyodbc not installed")
+        drivers = [d for d in pyodbc.drivers() if "SQL Server" in d]
+        driver  = next((d for d in drivers if "17" in d), drivers[0])
+        cs = (f"DRIVER={{{driver}}};SERVER={server};DATABASE={db};"
+              f"UID={user};PWD={pwd};TrustServerCertificate=yes") if user else (
+              f"DRIVER={{{driver}}};SERVER={server};DATABASE={db};"
+              f"Trusted_Connection=yes;TrustServerCertificate=yes")
+        conn = pyodbc.connect(cs, timeout=15)
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT COLUMN_NAME, DATA_TYPE,
+                   CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA=? AND TABLE_NAME=?
+            ORDER BY ORDINAL_POSITION
+        """, schema, table)
+        rows = [(r[0], r[1], r[2], r[3]) for r in cur.fetchall()]
+        conn.close()
+        return rows
+
+    def _populate_col_preview(self, schema, tbl, cols):
+        self._col_tv.delete(*self._col_tv.get_children())
+        has_limit = sum(1 for _, _, ml, _ in cols if ml and ml > 0)
+        self._col_prev_v.set(
+            f"📋  {schema}.{tbl}  —  {len(cols)} cols, {has_limit} with length limits")
+        for col, dtype, ml, nullable in cols:
+            limit = str(ml) if ml and ml > 0 else ("MAX" if ml == -1 else "—")
+            tag   = "haslimit" if (ml and ml > 0) else "nolimit"
+            self._col_tv.insert("", "end",
+                                values=(col, dtype, limit, nullable), tags=(tag,))
+
     def _fetch_db_schema(self):
         server = self._db_server.get().strip()
         db     = self._db_name.get().strip()
@@ -382,11 +601,12 @@ class TalendAutoFixApp:
         user   = self._db_user.get().strip()
         pwd    = self._db_pass.get().strip()
         if not server or not table:
-            messagebox.showwarning("Missing Info", "Enter Server and Table name."); return
+            messagebox.showwarning("Missing Info",
+                "Enter Server and Table name (or click a table in the browser)."); return
 
         def _run():
             self._q.put(self._prog_start)
-            self._q.put(lambda: self._db_sv.set("Connecting to database…"))
+            self._q.put(lambda: self._db_sv.set(f"Loading schema for {table}…"))
             try:
                 schema = self._db_fetch(server, db, table, user, pwd)
                 self._schema = schema
