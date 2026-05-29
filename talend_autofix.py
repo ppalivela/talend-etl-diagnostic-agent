@@ -909,78 +909,145 @@ class TalendAutoFixApp:
         return issues
 
     # ══════════════════════════════════════════════════════════════════════════
-    # TAB 2 — SCAN RESULTS
+    # TAB 2 — COMPARE & FIX
     # ══════════════════════════════════════════════════════════════════════════
     def _build_tab_scan(self):
         tab = self.t_scan
 
-        # ── header: status + action buttons ──────────────────────────────────
-        hdr = tk.Frame(tab, bg=C["surface"]); hdr.pack(fill="x", padx=14, pady=(10, 4))
+        # ── global header bar ─────────────────────────────────────────────────
+        hdr = tk.Frame(tab, bg=C["surface"]); hdr.pack(fill="x", padx=0, pady=0)
         self._scan_sv = tk.StringVar(
             value="No scan yet — go to ① and click '🔍 Load File & Scan for Issues'.")
         tk.Label(hdr, textvariable=self._scan_sv, font=("Segoe UI", 10, "bold"),
-                 bg=C["surface"], fg=C["yellow"]).pack(side="left", padx=10, pady=6)
-        self._btn(hdr, "▶ Proceed to Tab ③",
-                  self._proceed_to_autofix, C["green"]).pack(side="right", padx=(0, 8), pady=4)
+                 bg=C["surface"], fg=C["yellow"]).pack(side="left", padx=12, pady=7)
+        self._btn(hdr, "▶ Advanced Fix (Tab ③)",
+                  self._proceed_to_autofix, C["green"]).pack(side="right", padx=(0, 10), pady=5)
         self._btn(hdr, "⚡ Fix All & Save",
-                  self._one_click_fix_and_save, C["mauve"]).pack(side="right", padx=(0, 4), pady=4)
+                  self._one_click_fix_and_save, C["mauve"]).pack(side="right", padx=(0, 4), pady=5)
         self._btn(hdr, "🔄 Re-Run Scan",
-                  self._load_and_scan, C["blue"]).pack(side="right", padx=(0, 4), pady=4)
+                  self._load_and_scan, C["blue"]).pack(side="right", padx=(0, 4), pady=5)
 
-        # ── legend ────────────────────────────────────────────────────────────
-        leg = tk.Frame(tab, bg=C["bg"]); leg.pack(fill="x", padx=14, pady=(0, 2))
-        for sym, clr, lbl in [("■", C["red"],    " Critical (>20 chars over)  "),
-                               ("■", C["yellow"], " Warning (1-20 over)  "),
-                               ("■", C["blue"],   " Manually edited  ")]:
-            tk.Label(leg, text=sym, fg=clr, bg=C["bg"],
-                     font=("Consolas", 11)).pack(side="left")
-            tk.Label(leg, text=lbl, fg=C["subtext"], bg=C["bg"],
-                     font=("Segoe UI", 9)).pack(side="left")
-        tk.Label(leg, text="  ↕ Double-click any row to manually edit its Proposed Fix",
-                 fg=C["teal"], bg=C["bg"],
-                 font=("Segoe UI", 9, "italic")).pack(side="left", padx=8)
+        # ── vertical paned window: top = schema compare, bottom = row issues ──
+        pane = tk.PanedWindow(tab, orient="vertical", sashwidth=7,
+                              bg=C["overlay"], sashrelief="raised")
+        pane.pack(fill="both", expand=True, padx=0, pady=0)
 
-        # ── comparison treeview ───────────────────────────────────────────────
-        tf = tk.Frame(tab, bg=C["bg"]); tf.pack(fill="both", expand=True, padx=14, pady=4)
-        cols = ("row", "col", "db_limit", "orig_len", "over",
-                "original", "proposed", "mode")
-        self._scan_tv = ttk.Treeview(tf, columns=cols, show="headings",
+        # ╔══════════════════════════════════════════════════════╗
+        # ║  TOP PANE — Schema Comparison                        ║
+        # ╚══════════════════════════════════════════════════════╝
+        top_outer = tk.Frame(pane, bg=C["bg"])
+        pane.add(top_outer, minsize=140)
+
+        top_hdr = tk.Frame(top_outer, bg=C["dark"]); top_hdr.pack(fill="x")
+        tk.Label(top_hdr,
+                 text="📊  Schema Comparison — File Columns vs DB Columns"
+                      "   (click a row to filter issues below)",
+                 font=("Segoe UI", 9, "bold"),
+                 bg=C["dark"], fg=C["blue"]).pack(side="left", padx=10, pady=5)
+        # Legend
+        for sym, clr, lbl in [
+            ("■", "#a6e3a1", " ✅ Within limit "),
+            ("■", "#f9e2af", " ⚠️ Over limit   "),
+            ("■", "#f38ba8", " ❌ Critical      "),
+            ("■", "#fab387", " ❓ File col, no DB match "),
+            ("■", "#89b4fa", " ℹ️ DB col, not in file  "),
+        ]:
+            tk.Label(top_hdr, text=sym, fg=clr, bg=C["dark"],
+                     font=("Consolas", 10)).pack(side="right")
+            tk.Label(top_hdr, text=lbl, fg=C["subtext"], bg=C["dark"],
+                     font=("Segoe UI", 8)).pack(side="right")
+
+        tf_top = tk.Frame(top_outer, bg=C["bg"])
+        tf_top.pack(fill="both", expand=True, padx=6, pady=(0, 4))
+        cmp_cols = ("status", "file_col", "file_max", "file_sample",
+                    "db_col",  "db_type",  "db_limit", "issue_cnt")
+        self._cmp_tv = ttk.Treeview(tf_top, columns=cmp_cols, show="headings",
+                                     selectmode="browse")
+        for c, lbl, w in [
+            ("status",      "Status",                          90),
+            ("file_col",    "File Column",                    160),
+            ("file_max",    "Max in File",                     85),
+            ("file_sample", "Sample Value (first row)",        270),
+            ("db_col",      "DB Column",                       160),
+            ("db_type",     "DB Type",                          85),
+            ("db_limit",    "DB Limit",                         75),
+            ("issue_cnt",   "# Issues",                         70),
+        ]:
+            self._cmp_tv.heading(c, text=lbl)
+            self._cmp_tv.column(c, width=w, minwidth=40)
+        cvsb = ttk.Scrollbar(tf_top, orient="vertical",   command=self._cmp_tv.yview)
+        chsb = ttk.Scrollbar(tf_top, orient="horizontal", command=self._cmp_tv.xview)
+        self._cmp_tv.configure(yscrollcommand=cvsb.set, xscrollcommand=chsb.set)
+        self._cmp_tv.grid(row=0, column=0, sticky="nsew")
+        cvsb.grid(row=0, column=1, sticky="ns")
+        chsb.grid(row=1, column=0, sticky="ew")
+        tf_top.rowconfigure(0, weight=1); tf_top.columnconfigure(0, weight=1)
+        # Tag colours for schema comparison rows
+        self._cmp_tv.tag_configure("ok",       background="#0f2018", foreground="#a6e3a1")
+        self._cmp_tv.tag_configure("near",     background="#2a2000", foreground="#f9e2af")
+        self._cmp_tv.tag_configure("over",     background="#2D0A0A", foreground="#f38ba8")
+        self._cmp_tv.tag_configure("fileonly", background="#2a1500", foreground="#fab387")
+        self._cmp_tv.tag_configure("dbonly",   background="#0a1030", foreground="#89b4fa")
+        self._cmp_tv.bind("<<TreeviewSelect>>", self._on_cmp_select)
+
+        # ╔══════════════════════════════════════════════════════╗
+        # ║  BOTTOM PANE — Row-Level Issues                      ║
+        # ╚══════════════════════════════════════════════════════╝
+        bot_outer = tk.Frame(pane, bg=C["bg"])
+        pane.add(bot_outer, minsize=180)
+
+        bot_hdr = tk.Frame(bot_outer, bg=C["dark"]); bot_hdr.pack(fill="x")
+        self._issues_filter_v = tk.StringVar(value="Showing: ALL columns")
+        tk.Label(bot_hdr, textvariable=self._issues_filter_v,
+                 font=("Segoe UI", 9, "bold"), bg=C["dark"], fg=C["teal"]).pack(
+                 side="left", padx=10, pady=5)
+        self._btn(bot_hdr, "Show All Columns",
+                  lambda: self._filter_issues_by_col(None),
+                  C["overlay"], fg=C["text"]).pack(side="left", padx=4, pady=4)
+        tk.Label(bot_hdr,
+                 text="  ↕ Double-click row to edit Proposed Fix",
+                 font=("Segoe UI", 8, "italic"), bg=C["dark"],
+                 fg=C["subtext"]).pack(side="left", padx=10)
+
+        tf_bot = tk.Frame(bot_outer, bg=C["bg"])
+        tf_bot.pack(fill="both", expand=True, padx=6, pady=(0, 0))
+        iss_cols = ("row", "col", "db_limit", "orig_len", "over",
+                    "original", "proposed", "mode")
+        self._scan_tv = ttk.Treeview(tf_bot, columns=iss_cols, show="headings",
                                       selectmode="browse")
         for c, lbl, w in [
-            ("row",      "Row #",                               58),
-            ("col",      "Column",                             145),
+            ("row",      "Row #",                               56),
+            ("col",      "Column",                             140),
             ("db_limit", "DB Limit",                            72),
-            ("orig_len", "Actual Len",                          82),
-            ("over",     "Over By",                             72),
-            ("original", "Original Value  (first 80 chars)",   310),
-            ("proposed", "✏️  Proposed Fix  (dbl-click to edit)", 310),
+            ("orig_len", "Actual Len",                          80),
+            ("over",     "Over By",                             70),
+            ("original", "Original Value (first 80 chars)",    290),
+            ("proposed", "✏️ Proposed Fix (dbl-click to edit)", 290),
             ("mode",     "Mode",                                88),
         ]:
             self._scan_tv.heading(c, text=lbl)
             self._scan_tv.column(c, width=w, minwidth=40)
-        vsb = ttk.Scrollbar(tf, orient="vertical",   command=self._scan_tv.yview)
-        hsb = ttk.Scrollbar(tf, orient="horizontal", command=self._scan_tv.xview)
-        self._scan_tv.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        svsb = ttk.Scrollbar(tf_bot, orient="vertical",   command=self._scan_tv.yview)
+        shsb = ttk.Scrollbar(tf_bot, orient="horizontal", command=self._scan_tv.xview)
+        self._scan_tv.configure(yscrollcommand=svsb.set, xscrollcommand=shsb.set)
         self._scan_tv.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-        tf.rowconfigure(0, weight=1); tf.columnconfigure(0, weight=1)
+        svsb.grid(row=0, column=1, sticky="ns")
+        shsb.grid(row=1, column=0, sticky="ew")
+        tf_bot.rowconfigure(0, weight=1); tf_bot.columnconfigure(0, weight=1)
         self._scan_tv.tag_configure("critical",
             background="#2D0A0A", foreground="#f38ba8")
         self._scan_tv.tag_configure("warning",
             background="#2D1F00", foreground="#f9e2af")
         self._scan_tv.tag_configure("manual",
             background="#0A1A2D", foreground="#89b4fa")
-        self._scan_tv.tag_configure("clean",
-            background="#0f2018", foreground="#a6e3a1")
         self._scan_tv.bind("<Double-1>", self._edit_proposed_fix)
 
-        # ── bottom buttons ────────────────────────────────────────────────────
-        bf = tk.Frame(tab, bg=C["bg"]); bf.pack(fill="x", padx=14, pady=6)
+        # ── bottom action bar ─────────────────────────────────────────────────
+        bf = tk.Frame(bot_outer, bg=C["surface"]); bf.pack(fill="x")
         self._btn(bf, "💾 Export Issues Report", self._export_scan_report,
-                  C["overlay"], fg=C["text"]).pack(side="left")
+                  C["overlay"], fg=C["text"]).pack(side="left", padx=8, pady=5)
         self._btn(bf, "✏️ Edit Selected Fix", self._edit_proposed_fix_btn,
-                  C["teal"]).pack(side="left", padx=8)
+                  C["teal"]).pack(side="left", padx=4, pady=5)
 
     def _proceed_to_autofix(self):
         if not hasattr(self, '_issues') or self._issues is None:
@@ -1161,26 +1228,119 @@ class TalendAutoFixApp:
 
         threading.Thread(target=_run, daemon=True).start()
 
-    def _populate_scan_tab(self, df, issues):
-        self._scan_tv.delete(*self._scan_tv.get_children())
-        if not issues:
-            self._scan_sv.set(
-                f"✅  NO TRUNCATION ISSUES — {df.shape[0]:,} rows × {df.shape[1]} cols. "
-                f"File is already clean!")
+    def _build_col_comparison(self, df):
+        """Returns list of dicts describing each column's match status and stats."""
+        rows = []
+        schema     = self._schema
+        col_map    = self._col_map     # {file_col: schema_key}
+        issues_map = {}               # {file_col: count}
+        if self._issues:
+            for iss in self._issues:
+                issues_map[iss["col"]] = issues_map.get(iss["col"], 0) + 1
+
+        file_matched = set()
+        db_matched   = set()
+
+        # ── matched columns ───────────────────────────────────────────────────
+        for fc, sk in col_map.items():
+            file_matched.add(fc)
+            db_matched.add(sk)
+            sv       = schema[sk]
+            db_limit = sv.get("limit")
+            db_type  = sv.get("type", "?")
+            db_col   = sv["col"]
+
+            vals = df[fc].astype(str)
+            max_len = int(vals.str.len().max()) if len(vals) > 0 else 0
+            sample  = str(df[fc].iloc[0])[:60] if len(df) > 0 else ""
+            n_issues = issues_map.get(fc, 0)
+
+            if n_issues > 0 and max_len > (db_limit or 0) * 1.2:
+                status, tag = "❌ Critical — values exceed limit", "over"
+            elif n_issues > 0:
+                status, tag = "⚠️ Over limit — truncation needed", "near"
+            elif db_limit and max_len > db_limit * 0.9:
+                status, tag = "⚡ Near limit — monitor closely", "near"
+            else:
+                status, tag = "✅ Within limit", "ok"
+
+            rows.append({
+                "status":      status,
+                "file_col":    fc,
+                "file_max":    str(max_len),
+                "file_sample": sample,
+                "db_col":      db_col,
+                "db_type":     db_type,
+                "db_limit":    str(db_limit) if db_limit else "—",
+                "issue_cnt":   str(n_issues) if n_issues else "—",
+                "tag":         tag,
+            })
+
+        # ── file cols with no DB match ────────────────────────────────────────
+        for fc in df.columns:
+            if fc in file_matched:
+                continue
+            vals    = df[fc].astype(str)
+            max_len = int(vals.str.len().max()) if len(vals) > 0 else 0
+            sample  = str(df[fc].iloc[0])[:60] if len(df) > 0 else ""
+            rows.append({
+                "status":      "❓ File col — no matching DB column",
+                "file_col":    fc,
+                "file_max":    str(max_len),
+                "file_sample": sample,
+                "db_col":      "— (no DB match)",
+                "db_type":     "—",
+                "db_limit":    "—",
+                "issue_cnt":   "—",
+                "tag":         "fileonly",
+            })
+
+        # ── DB cols with no file match ────────────────────────────────────────
+        for sk, sv in schema.items():
+            if sk in db_matched:
+                continue
+            rows.append({
+                "status":      "ℹ️ DB col — not present in file",
+                "file_col":    "— (not in file)",
+                "file_max":    "—",
+                "file_sample": "—",
+                "db_col":      sv["col"],
+                "db_type":     sv.get("type", "?"),
+                "db_limit":    str(sv.get("limit")) if sv.get("limit") else "—",
+                "issue_cnt":   "—",
+                "tag":         "dbonly",
+            })
+        return rows
+
+    def _on_cmp_select(self, event=None):
+        """Filter row-level issues pane when user clicks a schema comparison row."""
+        sel = self._cmp_tv.selection()
+        if not sel:
             return
+        vals = self._cmp_tv.item(sel[0], "values")
+        if not vals:
+            return
+        # vals index 1 = file_col, index 4 = db_col
+        file_col = vals[1].strip()
+        if file_col.startswith("—"):
+            self._filter_issues_by_col(None)
+        else:
+            self._filter_issues_by_col(file_col)
 
-        col_c = {}
-        for i in issues:
-            col_c[i["col"]] = col_c.get(i["col"], 0) + 1
-        affected = len({i["row_idx"] for i in issues})
-        top = ", ".join(f"{c}({n})" for c, n in
-                        sorted(col_c.items(), key=lambda x: -x[1])[:4])
-        self._scan_sv.set(
-            f"⚠️  {len(issues):,} issues  |  {len(col_c)} columns  |  "
-            f"{affected:,} rows affected  |  Top: {top}  "
-            f"  ↕ Double-click to edit proposed fix")
+    def _filter_issues_by_col(self, file_col):
+        """Show only issues for the given file_col, or all if None."""
+        self._scan_tv.delete(*self._scan_tv.get_children())
+        if self._issues is None:
+            return
+        if file_col:
+            self._issues_filter_v.set(f"Showing: '{file_col}'  (click 'Show All' to reset)")
+            filtered = [(i, iss) for i, iss in enumerate(self._issues)
+                        if iss["col"] == file_col]
+        else:
+            self._issues_filter_v.set("Showing: ALL columns")
+            filtered = list(enumerate(self._issues))
 
-        for idx, iss in enumerate(issues):
+        for idx, iss in filtered:
             mode     = iss.get("mode", "🤖 Auto")
             proposed = iss.get("proposed", iss["original"][:iss["limit"]])
             if mode == "✏️ Manual":
@@ -1190,15 +1350,44 @@ class TalendAutoFixApp:
             else:
                 tag = "warning"
             self._scan_tv.insert("", "end", iid=f"iss_{idx}", values=(
-                iss["row"],
-                iss["col"],
-                iss["limit"],
-                iss["length"],
-                f"+{iss['over']}",
-                iss["original"][:80],
-                proposed[:80],
-                mode,
+                iss["row"], iss["col"], iss["limit"], iss["length"],
+                f"+{iss['over']}", iss["original"][:80], proposed[:80], mode,
             ), tags=(tag,))
+
+    def _populate_scan_tab(self, df, issues):
+        # ── populate schema comparison (top pane) ────────────────────────────
+        self._cmp_tv.delete(*self._cmp_tv.get_children())
+        cmp_rows = self._build_col_comparison(df)
+        for r in cmp_rows:
+            self._cmp_tv.insert("", "end", values=(
+                r["status"], r["file_col"], r["file_max"], r["file_sample"],
+                r["db_col"],  r["db_type"],  r["db_limit"], r["issue_cnt"],
+            ), tags=(r["tag"],))
+
+        # ── header status ─────────────────────────────────────────────────────
+        n_over    = sum(1 for r in cmp_rows if r["tag"] in ("over", "near"))
+        n_fileonly= sum(1 for r in cmp_rows if r["tag"] == "fileonly")
+        n_dbonly  = sum(1 for r in cmp_rows if r["tag"] == "dbonly")
+        if not issues:
+            self._scan_sv.set(
+                f"✅  ALL CLEAN — {df.shape[0]:,} rows × {df.shape[1]} cols  |  "
+                f"{len(cmp_rows)} cols compared  |  0 truncation issues  "
+                f"|  ❓ {n_fileonly} file-only  |  ℹ️ {n_dbonly} DB-only cols")
+        else:
+            col_c    = {}
+            for iss in issues:
+                col_c[iss["col"]] = col_c.get(iss["col"], 0) + 1
+            affected = len({i["row_idx"] for i in issues})
+            top = ", ".join(f"{c}({n})" for c, n in
+                            sorted(col_c.items(), key=lambda x: -x[1])[:4])
+            self._scan_sv.set(
+                f"⚠️  {len(issues):,} issues  |  {len(col_c)} cols affected  |  "
+                f"{affected:,} rows  |  Top: {top}  "
+                f"|  ❓ {n_fileonly} file-only  |  ℹ️ {n_dbonly} DB-only")
+
+        # ── populate row-level issues (bottom pane) ───────────────────────────
+        self._issues_filter_v.set("Showing: ALL columns")
+        self._filter_issues_by_col(None)
 
     def _export_scan_report(self):
         if not self._issues:
