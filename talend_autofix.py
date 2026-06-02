@@ -47,6 +47,14 @@ MHA_PROFILES = {
     "ROMULUS / GPOData":             {"server": "ROMULUS",         "db": "GPOData",        "auth": "windows"},
     "FLO-SQL-TDMU (SQL Auth)":       {"server": "FLO-SQL-TDMU",   "db": "",               "auth": "sql",
                                       "user": "SRVFLO-SQL-Talend"},
+    # ── FLO-SQL-TDMP ──────────────────────────────────────────────────────────
+    "FLO-SQL-TDMP / (type DB name)": {"server": "FLO-SQL-TDMP",   "db": "",               "auth": "windows"},
+    "FLO-SQL-TDMP / master":         {"server": "FLO-SQL-TDMP",   "db": "master",         "auth": "windows"},
+    # ── morphesus1 ────────────────────────────────────────────────────────────
+    "morphesus1 / (type DB name)":   {"server": "morphesus1",     "db": "",               "auth": "windows"},
+    "morphesus1 / master":           {"server": "morphesus1",     "db": "master",         "auth": "windows"},
+    # ── romulus extra ─────────────────────────────────────────────────────────
+    "ROMULUS / (type DB name)":      {"server": "ROMULUS",        "db": "",               "auth": "windows"},
     "Custom...":                     None,
 }
 

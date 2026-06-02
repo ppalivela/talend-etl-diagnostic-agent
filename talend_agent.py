@@ -792,6 +792,29 @@ DB_PRESETS = {
         "type": "SQL Server", "host": "FLO-SQL-TDMU", "port": "1433",
         "db": "talend_amc", "schema": "dbo", "user": "SRVFLO-SQL-Talend", "pwd": "",
     },
+    # ── FLO-SQL-TDMP (Windows Auth) ──────────────────────────────────────────
+    "FLO-SQL-TDMP  →  (type DB name)": {
+        "type": "SQL Server", "host": "FLO-SQL-TDMP", "port": "1433",
+        "db": "", "schema": "dbo", "user": "", "pwd": "",
+    },
+    "FLO-SQL-TDMP  →  master": {
+        "type": "SQL Server", "host": "FLO-SQL-TDMP", "port": "1433",
+        "db": "master", "schema": "dbo", "user": "", "pwd": "",
+    },
+    # ── morphesus1 (Windows Auth) ─────────────────────────────────────────────
+    "morphesus1  →  (type DB name)": {
+        "type": "SQL Server", "host": "morphesus1", "port": "1433",
+        "db": "", "schema": "dbo", "user": "", "pwd": "",
+    },
+    "morphesus1  →  master": {
+        "type": "SQL Server", "host": "morphesus1", "port": "1433",
+        "db": "master", "schema": "dbo", "user": "", "pwd": "",
+    },
+    # ── romulus extra databases (Windows Auth) ────────────────────────────────
+    "ROMULUS  →  (type DB name)": {
+        "type": "SQL Server", "host": "ROMULUS", "port": "1433",
+        "db": "", "schema": "dbo", "user": "", "pwd": "",
+    },
 }
 
 PLACEHOLDER = ("Paste the error email or Talend alert below...\n\n"
