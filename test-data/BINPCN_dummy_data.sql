@@ -85,7 +85,9 @@ WHEN NOT MATCHED THEN
     INSERT (PB_PBID, PB_NAME, BP_PLANTYPE)
     VALUES (src.PB_PBID, src.PB_NAME, src.BP_PLANTYPE);
 
-PRINT CONCAT('PBM rows after merge: ', (SELECT COUNT(*) FROM dbo.PBM));
+DECLARE @pbmCnt INT;
+SELECT @pbmCnt = COUNT(*) FROM dbo.PBM;
+PRINT CONCAT('PBM rows after merge: ', @pbmCnt);
 GO
 
 -- =============================================================================
@@ -155,7 +157,9 @@ VALUES
 (9,  '610649', 'NAV_OLD',    'EXPIRED_G4',       '2020-06-01', '2022-06-30'),
 (11, '015581', 'HUM_OLD',    'EXPIRED_G5',       '2019-01-01', '2020-12-31');
 
-PRINT CONCAT('BINPCN rows inserted total: ', (SELECT COUNT(*) FROM dbo.BINPCN));
+DECLARE @binCnt INT;
+SELECT @binCnt = COUNT(*) FROM dbo.BINPCN;
+PRINT CONCAT('BINPCN rows inserted total: ', @binCnt);
 GO
 
 -- =============================================================================
