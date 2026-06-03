@@ -1,0 +1,31 @@
+BP_BIN,BP_PCN,BP_CHGRP,PB_NAME,BP_PLANTYPE
+610014,ESI,COMMERC01,Express Scripts (ESI),Commercial
+610014,ESI,COMMERC02,Express Scripts (ESI),Commercial
+610014,MEDCO,MEDCO_GRP1,Express Scripts (ESI),Commercial
+610014,ESI,GOVTPLAN,Express Scripts (ESI),Commercial
+610014,ESI,MEDB2026,Express Scripts (ESI),Medicare Part D
+610011,SXC,PARTD_ESI,Express Scripts (ESI),Medicare Part D
+004336,ADV,CVS_COM01,CVS Caremark,Commercial
+004336,PBMADV,CVS_COM02,CVS Caremark,Commercial
+610502,ADV,SILV_COM,CVS Caremark,Commercial
+004336,ADV,CVS_MED26,CVS Caremark,Medicare Part D
+610502,PBMADV,CVS_MED27,CVS Caremark,Medicare Part D
+610591,ADV,OPT_COM01,OptumRx,Commercial
+610591,OPTUMRX,OPT_COM02,OptumRx,Commercial
+610591,ADV,OPT_MED26,OptumRx,Medicare Part D
+610020,MEDIMPACT,MEDI_COM1,MedImpact Healthcare Systems,Commercial
+610020,MEDIMPACT,MEDI_COM2,MedImpact Healthcare Systems,Commercial
+610020,MEDIMPACT,MEDI_MCAID,MedImpact Healthcare Systems,Medicaid
+610649,NAVITUS,NAV_COM01,Navitus Health Solutions,Commercial
+610649,NAVITUS,NAV_COM02,Navitus Health Solutions,Commercial
+610649,NAVITUS,NAV_MED26,Navitus Health Solutions,Medicare Part D
+015581,HUMRX,HUM_MED26,Humana Pharmacy Solutions,Medicare Part D
+015581,HUMANA,HUM_MED27,Humana Pharmacy Solutions,Medicare Part D
+015581,HUMRX,HUM_COM01,Humana Pharmacy Solutions,Commercial
+600428,PRIMETP,PRI_COM01,Prime Therapeutics,Commercial
+600428,PRIMETP,PRI_MCAID,Prime Therapeutics,Medicaid
+610011,SXC,SXC_COM01,SXC Health Solutions,Commercial
+010540,MAGELLAN,MAG_COM01,Magellan Rx Management,Commercial
+010540,MAGELLAN,MAG_MCAID,Magellan Rx Management,Medicaid
+011779,WELLDYNE,WDR_COM01,WellDyneRx,Commercial
+610460,ZINC,ZINC_COM1,Zinc Health Services,Commercial
