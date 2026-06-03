@@ -670,6 +670,70 @@ def db_list_tables(conn, db_type, schema=""):
         return []
 
 
+def db_list_databases(db_type, host, port, user, password):
+    """Connect to the server (using master / default) and return all accessible database names."""
+    try:
+        if db_type == "SQL Server":
+            if not PYODBC_OK:
+                return [], "pyodbc not installed"
+            drivers = [d for d in pyodbc.drivers() if "SQL Server" in d] or \
+                      ["ODBC Driver 17 for SQL Server", "ODBC Driver 18 for SQL Server", "SQL Server"]
+            conn = None
+            last_err = "No driver found"
+            for drv in drivers:
+                try:
+                    if user:
+                        cs = (f"DRIVER={{{drv}}};SERVER={host},{port};DATABASE=master;"
+                              f"UID={user};PWD={password};TrustServerCertificate=yes")
+                    else:
+                        cs = (f"DRIVER={{{drv}}};SERVER={host},{port};DATABASE=master;"
+                              f"Trusted_Connection=yes;TrustServerCertificate=yes")
+                    conn = pyodbc.connect(cs, timeout=10)
+                    break
+                except Exception as e:
+                    last_err = str(e)
+            if not conn:
+                return [], last_err
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM sys.databases WHERE state_desc='ONLINE' ORDER BY name")
+            dbs = [r[0] for r in cur.fetchall()]
+            conn.close()
+            return dbs, None
+        elif db_type == "Oracle":
+            if not ORACLE_OK:
+                return [], "oracledb not installed"
+            conn = oracledb.connect(user=user, password=password, dsn=f"{host}:{port}/")
+            cur = conn.cursor()
+            cur.execute("SELECT DISTINCT OWNER FROM ALL_OBJECTS ORDER BY OWNER")
+            dbs = [r[0] for r in cur.fetchall()]
+            conn.close()
+            return dbs, None
+        elif db_type == "MySQL":
+            if not MYSQL_OK:
+                return [], "mysql-connector-python not installed"
+            conn = _mysql.connect(host=host, port=int(port or 3306),
+                                  user=user, password=password, connection_timeout=10)
+            cur = conn.cursor()
+            cur.execute("SHOW DATABASES")
+            dbs = [r[0] for r in cur.fetchall()]
+            conn.close()
+            return dbs, None
+        elif db_type == "PostgreSQL":
+            if not PG_OK:
+                return [], "psycopg2 not installed"
+            conn = psycopg2.connect(host=host, port=int(port or 5432),
+                                    dbname="postgres", user=user, password=password, connect_timeout=10)
+            cur = conn.cursor()
+            cur.execute("SELECT datname FROM pg_database WHERE datistemplate=false ORDER BY datname")
+            dbs = [r[0] for r in cur.fetchall()]
+            conn.close()
+            return dbs, None
+        else:
+            return [], f"Browse not supported for {db_type}"
+    except Exception as e:
+        return [], str(e)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  COLUMN MATCHING HELPERS  (MHA naming convention: file → tMap adds RD_ → DB)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1901,6 +1965,9 @@ class App(tk.Tk):
         tk.Button(btn_row, text="🔌 Test Connection", bg="#89b4fa", fg="#1e1e2e",
                    font=("Segoe UI",10,"bold"), relief="flat", cursor="hand2", padx=14, pady=6,
                    command=self._test_connection).pack(side="left", padx=(0,8))
+        tk.Button(btn_row, text="📂 Browse Databases", bg="#a6e3a1", fg="#1e1e2e",
+                   font=("Segoe UI",10,"bold"), relief="flat", cursor="hand2", padx=14, pady=6,
+                   command=self._browse_databases).pack(side="left", padx=(0,8))
         tk.Button(btn_row, text="🔌 Connect", bg="#45475a", fg="#cdd6f4",
                    font=("Segoe UI",10), relief="flat", cursor="hand2", padx=12, pady=6,
                    command=self._do_connect).pack(side="left", padx=(0,8))
@@ -2700,6 +2767,100 @@ class App(tk.Tk):
         if self._file_headers:
             self._show_column_stats(self._file_headers, self._file_stats, None)
         self._update_report()
+
+    def _browse_databases(self):
+        """Connect to the server (via master) and show all available databases to pick from."""
+        host = self._db_host_var.get().strip()
+        if not host:
+            messagebox.showwarning("No Server", "Enter a Server / Host name first."); return
+
+        self._conn_status_var.set(f"⏳ Browsing databases on {host}…")
+        self.update()
+
+        db_type = self._db_type_var.get()
+        dbs, err = db_list_databases(
+            db_type, host, self._db_port_var.get(),
+            self._db_user_var.get(), self._db_pwd_var.get()
+        )
+
+        if err and not dbs:
+            self._conn_status_var.set(f"❌ {err[:80]}")
+            messagebox.showerror("Browse Failed",
+                f"Could not list databases on {host}:\n\n{err}\n\n"
+                "• Verify server name and network/VPN\n"
+                "• For Windows Auth: ensure you're on the domain\n"
+                "• For SQL Auth: check username/password")
+            return
+
+        self._conn_status_var.set(f"✅ Found {len(dbs)} databases on {host} — pick one below")
+
+        # ── Popup listbox ──────────────────────────────────────────────────────
+        win = tk.Toplevel(self)
+        win.title(f"Databases on {host}")
+        win.geometry("420x520")
+        win.configure(bg="#1e1e2e")
+        win.grab_set()
+        win.lift()
+
+        tk.Label(win, text=f"🗄️  {len(dbs)} databases on {host}",
+                 bg="#1e1e2e", fg="#a6e3a1",
+                 font=("Segoe UI", 12, "bold")).pack(padx=14, pady=(12, 2))
+        tk.Label(win, text="Double-click or select + click Connect",
+                 bg="#1e1e2e", fg="#6c7086",
+                 font=("Segoe UI", 9, "italic")).pack(padx=14, pady=(0, 8))
+
+        # Search filter
+        search_var = tk.StringVar()
+        search_entry = tk.Entry(win, textvariable=search_var, bg="#181825", fg="#cdd6f4",
+                                insertbackground="#89b4fa", relief="flat",
+                                font=("Consolas", 10), width=38)
+        search_entry.pack(padx=14, pady=(0, 6))
+        search_entry.focus_set()
+
+        lb_f = tk.Frame(win, bg="#1e1e2e")
+        lb_f.pack(fill="both", expand=True, padx=14)
+        lb = tk.Listbox(lb_f, bg="#181825", fg="#cdd6f4", font=("Consolas", 10),
+                        selectbackground="#313244", selectforeground="#a6e3a1",
+                        relief="flat", activestyle="none")
+        vsb = ttk.Scrollbar(lb_f, command=lb.yview)
+        lb.configure(yscrollcommand=vsb.set)
+        lb.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        all_dbs = sorted(dbs)
+        def _refresh_list(*_):
+            q = search_var.get().lower()
+            lb.delete(0, "end")
+            for d in all_dbs:
+                if q in d.lower():
+                    lb.insert("end", d)
+        _refresh_list()
+        search_var.trace_add("write", _refresh_list)
+
+        def _use_selected():
+            sel = lb.curselection()
+            if not sel:
+                messagebox.showinfo("Select", "Click a database name first."); return
+            chosen = lb.get(sel[0])
+            self._db_name_var.set(chosen)
+            win.destroy()
+            # Auto-connect with chosen database
+            self._conn_status_var.set(f"Connecting to {host}/{chosen}…")
+            self.update()
+            self._do_connect()
+
+        btn_f = tk.Frame(win, bg="#1e1e2e")
+        btn_f.pack(fill="x", padx=14, pady=(6, 12))
+        tk.Button(btn_f, text="✅ Connect to Selected", bg="#a6e3a1", fg="#1e1e2e",
+                   font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+                   padx=18, pady=6, command=_use_selected).pack(side="left", padx=(0, 8))
+        tk.Button(btn_f, text="Cancel", bg="#45475a", fg="#cdd6f4",
+                   font=("Segoe UI", 10), relief="flat", cursor="hand2",
+                   padx=12, pady=6, command=win.destroy).pack(side="left")
+
+        lb.bind("<Double-Button-1>", lambda _: _use_selected())
+        search_entry.bind("<Return>", lambda _: _use_selected()
+                          if lb.size() == 1 else lb.focus_set())
 
     def _list_tables(self):
         if not self._db_conn:
