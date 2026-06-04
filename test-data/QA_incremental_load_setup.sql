@@ -96,6 +96,9 @@ GO
 --           When the job runs, tDBInput_1 will pick them up too
 -- =============================================================================
 
+-- Remove any previously added test BINs before re-inserting (safe re-run)
+DELETE FROM dbo.BINPCN WHERE BP_BIN IN ('810001','810002','820001','820002','830001','830002');
+
 -- First ensure PBM has entries for our test PBIDs
 MERGE dbo.PBM AS tgt
 USING (VALUES
@@ -135,14 +138,13 @@ GO
 
 INSERT INTO dbo.MHA_Master_BPG
     (BP_BIN, BP_PCN, BP_CHGRP, PB_NAME, BP_PLANTYPE,
-     Sent_To_MMIT, MMIT_Status, Date_Added_To_Master, Is_New_Record, Date_Sent_MMIT)
+     Sent_To_MMIT, MMIT_Status, Date_Added_To_Master, Is_New_Record)
 SELECT DISTINCT
     a.BP_BIN, a.BP_PCN, a.BP_CHGRP, b.PB_NAME, b.BP_PLANTYPE,
     1           AS Sent_To_MMIT,
     'Processed' AS MMIT_Status,
     DATEADD(DAY, -30, GETDATE()) AS Date_Added_To_Master,
-    0           AS Is_New_Record,          -- Already processed
-    DATEADD(DAY, -29, GETDATE()) AS Date_Sent_MMIT
+    0           AS Is_New_Record           -- Already processed
 FROM dbo.BINPCN  a
 INNER JOIN dbo.PBM b ON a.BP_PBID = b.PB_PBID
 WHERE a.BP_END >= GETDATE()
@@ -205,7 +207,7 @@ GO
 PRINT '=== QA STATE BEFORE JOB RUN ===';
 SELECT
     'BINPCN active rows (tDBInput_1 source)'         AS Description,
-    COUNT(*) AS RowCount
+    COUNT(*) AS Total_Rows
 FROM dbo.BINPCN a
 INNER JOIN dbo.PBM b ON a.BP_PBID = b.PB_PBID
 WHERE a.BP_END >= GETDATE()
