@@ -147,8 +147,7 @@ BEGIN
     BEGIN
         -- File may already have been written — flag for manual review
         UPDATE dbo.MHA_Master_BPG
-        SET    MMIT_Status  = 'RecoveryNeeded',
-               BPG_UPDSTMP = GETDATE()
+        SET    MMIT_Status  = 'RecoveryNeeded'
         WHERE  Is_New_Record = 1
           AND  Sent_To_MMIT  = 0;
 
@@ -213,7 +212,9 @@ EXEC dbo.sp_MMIT_Recover
 DECLARE @afterCnt INT;
 SELECT @afterCnt = COUNT(*) FROM dbo.MHA_Master_BPG WHERE Is_New_Record=1 AND MMIT_Status='Pending';
 PRINT CONCAT('After recovery:  Is_New_Record=1 Pending rows = ', @afterCnt);
-PRINT CONCAT('Staging rows after recovery: ', (SELECT COUNT(*) FROM dbo.MHA_BPG_Staging));
+DECLARE @stgCnt INT;
+SELECT @stgCnt = COUNT(*) FROM dbo.MHA_BPG_Staging;
+PRINT CONCAT('Staging rows after recovery: ', @stgCnt);
 GO
 
 -- Show error log
