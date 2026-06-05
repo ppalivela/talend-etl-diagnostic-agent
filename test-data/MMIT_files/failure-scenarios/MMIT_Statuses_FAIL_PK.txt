@@ -1,0 +1,3 @@
+ClientId|Period|FormularyId|MedId|TherapeuticClass|UniversalStatus|UniversalStatusRollup|RawStatus|ProcessingDate
+1001|202512|401|2001|Biologic|Covered|Covered|Tier 3|2025-12-01
+1001|202512|401|2002|Antidiabetic|Covered|Covered|Tier 2|2025-12-01

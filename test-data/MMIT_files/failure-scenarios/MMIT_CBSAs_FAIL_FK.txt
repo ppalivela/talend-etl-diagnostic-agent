@@ -1,0 +1,2 @@
+ClientId|OrgId|State|Period|CBSACode|CBSA|Lives|ProcessingDate
+1001|999|TX|202601|19100|Dallas-Fort Worth|1500000|2025-12-01

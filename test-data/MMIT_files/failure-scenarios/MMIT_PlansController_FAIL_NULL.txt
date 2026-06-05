@@ -1,0 +1,2 @@
+ClientId|Period|OrgId|PlanName|FormularyId|FormularyName|ControllerId|ControllerName|ParentId|ParentName|Channel|PlanType|PBMId|PBMName|PBMRelationship|NotListedPolicy|NonFormularyPolicy|BenefitDesign|ProcessingDate
+1001|202601|901|Missing PlanType Plan|901|Formulary X|901|Controller X|901|Parent X|Retail||901|ESI|Primary|Formulary|Non-Covered|Standard|2025-12-01

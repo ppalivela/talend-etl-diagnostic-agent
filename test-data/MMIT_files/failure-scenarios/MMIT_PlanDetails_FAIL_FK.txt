@@ -1,0 +1,2 @@
+ClientId|Period|OrgId|PlanName|FormularyId|FormularyName|ControllerId|ControllerName|ParentId|ParentName|Channel|PlanType|PBMId|PBMName|PBMRelationship|NotListedPolicy|NonFormularyPolicy|BenefitDesign|Address1|Address2|City|StateId|Zip|ZipExt|Phone|PriorAuthPhone|PriorAuthFax|MemberPhone|ProcessingDate
+1001|202601|999|Orphan Plan|999|Formulary X|999|Controller X|999|Parent X|Retail|Commercial|999|ESI|Primary|Formulary|Non-Covered|Standard|100 Main||Dallas|TX|75001|1234|2145550101|2145550201|2145550301|2145550401|2025-12-01

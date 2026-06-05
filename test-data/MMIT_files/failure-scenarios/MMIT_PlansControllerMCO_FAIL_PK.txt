@@ -1,0 +1,2 @@
+ClientId|Period|OrgId|PlanName|FormularyId|FormularyName|ControllerId|ControllerName|MCOId|MCOName|ParentId|ParentName|Channel|PlanType|PBMId|PBMName|PBMRelationship|NotListedPolicy|NonFormularyPolicy|BenefitDesign|ProcessingDate
+1001|202512|301|MHA Gold HMO DUPLICATE|401|Formulary Gold|501|Controller Alpha|801|MCO Alpha|601|Parent Alpha|Retail|HMO|701|ESI|Primary|Formulary|Non-Covered|Standard|2025-12-01

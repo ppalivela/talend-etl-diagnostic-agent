@@ -1,0 +1,4 @@
+ClientId|Period|MedId|DrugName|ProductClass|BrandGeneric|ClientDrugFlag|ProcessingDate
+1001|202512|2001|Humira 40mg Pen DUPLICATE|Biologic|B|Y|2025-12-01
+1001|202512|2002|Ozempic DUPLICATE|GLP-1 Agonist|B|Y|2025-12-01
+1001|202512|2003|Eliquis DUPLICATE|Anticoagulant|B|Y|2025-12-01
