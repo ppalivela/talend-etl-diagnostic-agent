@@ -1,0 +1,21 @@
+DETAIL_ID|PAN_ID|CRITERION_TYPE|CRITERION_TEXT|REQUIRED_DOCUMENTATION|CRITERION_ORDER|LOAD_DATE
+11001|5001|Diagnosis|Patient must have a confirmed diagnosis of moderate-to-severe rheumatoid arthritis (RA)|Physician letter with ICD-10 code M05.x or M06.x|1|2026-06-04
+11002|5001|Trial Therapy|Patient must have had an inadequate response to at least 2 conventional DMARDs including methotrexate|Documentation of DMARD trial dates, doses, and reason for discontinuation|2|2026-06-04
+11003|5001|Lab Results|Current lab values required: CBC, CMP, TB test (QuantiFERON or PPD)|Lab reports within 3 months|3|2026-06-04
+11004|5002|Diagnosis|Patient must have a confirmed diagnosis of Type 2 Diabetes Mellitus|Physician letter with ICD-10 code E11.x|1|2026-06-04
+11005|5002|Lab Results|HbA1c must be documented as >= 7.0% within 90 days|Most recent HbA1c lab report|2|2026-06-04
+11006|5002|Trial Therapy|Must have tried and failed or have contraindication to metformin|Documentation of metformin trial or contraindication note|3|2026-06-04
+11007|5003|Diagnosis|Patient must have confirmed Multiple Myeloma diagnosis|Pathology report or oncologist letter|1|2026-06-04
+11008|5003|Specialty Pharmacy|Must be dispensed through a REMS-certified specialty pharmacy|Specialty pharmacy enrollment form|2|2026-06-04
+11009|5003|Prescriber|Must be prescribed by a board-certified oncologist or hematologist|Prescriber specialty documentation|3|2026-06-04
+11010|5004|Diagnosis|Moderate-to-severe plaque psoriasis with BSA > 10% or PASI > 10|Dermatologist assessment with BSA/PASI score|1|2026-06-04
+11011|5004|Trial Therapy|Failure of phototherapy (UVB or PUVA) or contraindication documented|Phototherapy records or contraindication letter|2|2026-06-04
+11012|5005|Diagnosis|Confirmed diagnosis of moderate-to-severe atopic dermatitis|Physician letter with EASI or IGA score|1|2026-06-04
+11013|5005|Trial Therapy|Inadequate response to topical corticosteroids and/or calcineurin inhibitors|Documentation of topical therapy trials (minimum 28 days each)|2|2026-06-04
+11014|5006|Diagnosis|HFrEF with ejection fraction <= 40% documented|Echocardiogram report within 12 months|1|2026-06-04
+11015|5006|Trial Therapy|Currently on stable dose of ACE inhibitor or ARB (unless contraindicated)|Current medication list or contraindication documentation|2|2026-06-04
+11016|5007|Diagnosis|Non-small cell lung cancer (NSCLC) with PD-L1 expression >= 1%|Pathology report with PD-L1 biomarker result|1|2026-06-04
+11017|5007|Prescriber|Must be prescribed by a board-certified oncologist|Oncologist specialty certification|2|2026-06-04
+11018|5008|Diagnosis|Chronic migraine (>= 15 headache days/month) OR episodic migraine (4-14 days/month)|Headache diary or neurologist assessment|1|2026-06-04
+11019|5008|Trial Therapy|Failure of at least 2 oral preventive migraine medications|Documentation of trials: beta-blockers, tricyclics, or anticonvulsants|2|2026-06-04
+11020|5009|Diagnosis|Confirmed RA diagnosis with radiographic evidence of joint damage|X-ray or MRI report|1|2026-06-04

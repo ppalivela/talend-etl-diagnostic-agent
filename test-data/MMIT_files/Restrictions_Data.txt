@@ -1,0 +1,21 @@
+RESTRICTION_ID|DRUG_ID|PLAN_ID|PLAN_NAME|RESTRICTION_TYPE|RESTRICTION_DETAILS|COVERAGE_STATUS|TIER_LEVEL|EFF_DATE|LOAD_DATE
+8001|1001|CVS001|CVS Caremark Commercial|PA Required|Must fail 2 conventional DMARDs prior to approval|Covered with Restrictions|3|2026-01-01|2026-06-04
+8002|1001|ESI001|Express Scripts Commercial|Step Therapy + PA|Step through methotrexate and one other DMARD|Covered with Restrictions|3|2026-01-01|2026-06-04
+8003|1001|OPT001|OptumRx Commercial|PA Required|Clinical PA required - diagnosis and trial therapy documented|Covered with Restrictions|3|2026-01-01|2026-06-04
+8004|1002|CVS001|CVS Caremark Commercial|PA + Quantity Limit|Max 4 pens/28 days. A1C > 7 required|Covered with Restrictions|2|2026-01-01|2026-06-04
+8005|1002|HUM001|Humana Medicare PDP|PA Required|Diagnosis of T2DM required. Step through metformin|Covered with Restrictions|4|2026-01-01|2026-06-04
+8006|1005|ESI001|Express Scripts Commercial|PA + Quantity Limit|eGFR > 30. Max 30 tabs/30 days|Covered with Restrictions|2|2026-01-01|2026-06-04
+8007|1007|CVS001|CVS Caremark Commercial|PA Required|Diagnosis of moderate-to-severe AD. Inadequate response to topical|Covered with Restrictions|3|2026-01-01|2026-06-04
+8008|1009|MED001|MedImpact Commercial|Step Therapy|Must fail MTX + one biologic (TNF inhibitor)|Covered with Restrictions|3|2026-01-01|2026-06-04
+8009|1011|OPT001|OptumRx Commercial|PA Required|Myeloma diagnosis required. Specialty pharmacy only|Covered with Restrictions|5|2026-01-01|2026-06-04
+8010|1013|ESI001|Express Scripts Commercial|Step Therapy|Must fail one other TNF inhibitor prior to approval|Step Therapy Required|3|2026-01-01|2026-06-04
+8011|1017|CVS001|CVS Caremark Commercial|PA Required|RA/PsA/AS diagnosis. Inadequate response to MTX|PA Required|3|2026-01-01|2026-06-04
+8012|1018|HUM001|Humana Medicare PDP|PA Required|Cancer diagnosis with biomarker testing required|Covered with Restrictions|5|2026-01-01|2026-06-04
+8013|1003|NAV001|Navitus Commercial|No Restriction|Preferred brand - no prior auth required|Preferred Brand|2|2026-01-01|2026-06-04
+8014|1004|NAV001|Navitus Commercial|Quantity Limit|Max 30 tabs/30 days|Covered with Quantity Limit|2|2026-01-01|2026-06-04
+8015|1006|MED001|MedImpact Commercial|PA Required|HFrEF diagnosis (EF < 40%). On ACE/ARB currently|Covered with Restrictions|3|2026-01-01|2026-06-04
+8016|1008|ESI001|Express Scripts Commercial|PA Required|Psoriasis diagnosis. BSA > 10% or PASI > 10|Covered with Restrictions|3|2026-01-01|2026-06-04
+8017|1012|CVS001|CVS Caremark Commercial|No Restriction|Preferred specialty - standard coverage|Preferred Brand|3|2026-01-01|2026-06-04
+8018|1014|OPT001|OptumRx Commercial|PA Required|Moderate-to-severe plaque psoriasis. Phototherapy failure|Covered with Restrictions|3|2026-01-01|2026-06-04
+8019|1019|HUM001|Humana Commercial|PA Required|Episodic migraine > 4/month. Failure of 2 preventatives|Covered with Restrictions|3|2026-01-01|2026-06-04
+8020|1020|MED001|MedImpact Commercial|PA Required|RA/PsA/AS/CD diagnosis. Failure of MTX|Covered with Restrictions|3|2026-01-01|2026-06-04

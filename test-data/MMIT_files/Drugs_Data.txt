@@ -1,0 +1,21 @@
+DRUG_ID|NDC|BRAND_NAME|GENERIC_NAME|MANUFACTURER|DRUG_CLASS|THERAPEUTIC_CLASS|FORMULARY_STATUS|IS_ACTIVE|LOAD_DATE
+1001|00074433201|Humira|adalimumab|AbbVie|Biologic|TNF Inhibitor|Covered|1|2026-06-04
+1002|00169430212|Ozempic|semaglutide|Novo Nordisk|GLP-1 Agonist|Diabetes|Covered|1|2026-06-04
+1003|00069000130|Eliquis|apixaban|Bristol-Myers Squibb|Anticoagulant|Cardiovascular|Covered|1|2026-06-04
+1004|50458049303|Xarelto|rivaroxaban|Janssen|Anticoagulant|Cardiovascular|Covered|1|2026-06-04
+1005|00002143380|Jardiance|empagliflozin|Boehringer Ingelheim|SGLT2 Inhibitor|Diabetes|Covered|1|2026-06-04
+1006|00078076515|Entresto|sacubitril/valsartan|Novartis|Neprilysin Inhibitor|Heart Failure|Covered|1|2026-06-04
+1007|00024595401|Dupixent|dupilumab|Sanofi/Regeneron|IL-4/IL-13 Inhibitor|Dermatology|Covered|1|2026-06-04
+1008|00023552301|Skyrizi|risankizumab|AbbVie|IL-23 Inhibitor|Dermatology|Covered|1|2026-06-04
+1009|57894008001|Stelara|ustekinumab|Janssen|IL-12/23 Inhibitor|Immunology|Covered|1|2026-06-04
+1010|59148001001|Imbruvica|ibrutinib|AbbVie/Janssen|BTK Inhibitor|Oncology|Covered|1|2026-06-04
+1011|00054021025|Revlimid|lenalidomide|Bristol-Myers Squibb|Immunomodulator|Oncology|Covered PA Required|1|2026-06-04
+1012|58406042503|Enbrel|etanercept|Amgen/Pfizer|TNF Inhibitor|Immunology|Covered|1|2026-06-04
+1013|57894025001|Remicade|infliximab|Janssen|TNF Inhibitor|Immunology|Step Therapy Required|1|2026-06-04
+1014|00078044215|Cosentyx|secukinumab|Novartis|IL-17A Inhibitor|Dermatology|Covered|1|2026-06-04
+1015|00002794601|Taltz|ixekizumab|Eli Lilly|IL-17A Inhibitor|Dermatology|Covered|1|2026-06-04
+1016|00023577201|Tremfya|guselkumab|Janssen|IL-23 Inhibitor|Dermatology|Covered|1|2026-06-04
+1017|00074267801|Rinvoq|upadacitinib|AbbVie|JAK Inhibitor|Immunology|PA Required|1|2026-06-04
+1018|00006305501|Keytruda|pembrolizumab|Merck|PD-1 Inhibitor|Oncology|Covered|1|2026-06-04
+1019|00078082615|Aimovig|erenumab|Novartis/Amgen|CGRP Inhibitor|Neurology|Covered|1|2026-06-04
+1020|00069015030|Cimzia|certolizumab pegol|UCB|TNF Inhibitor|Immunology|Covered|1|2026-06-04

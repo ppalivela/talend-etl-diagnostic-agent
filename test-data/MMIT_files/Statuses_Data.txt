@@ -1,0 +1,16 @@
+STATUS_ID|STATUS_CODE|STATUS_DESCRIPTION|STATUS_TYPE|STATUS_CATEGORY|IS_ACTIVE|LOAD_DATE
+9001|COV|Covered|Formulary|Positive Coverage|1|2026-06-04
+9002|COV-T1|Covered Tier 1 (Preferred Generic)|Formulary|Positive Coverage|1|2026-06-04
+9003|COV-T2|Covered Tier 2 (Preferred Brand)|Formulary|Positive Coverage|1|2026-06-04
+9004|COV-T3|Covered Tier 3 (Non-Preferred Brand)|Formulary|Positive Coverage|1|2026-06-04
+9005|COV-T4|Covered Tier 4 (Specialty)|Formulary|Positive Coverage|1|2026-06-04
+9006|COV-T5|Covered Tier 5 (Specialty High Cost)|Formulary|Positive Coverage|1|2026-06-04
+9007|PA-REQ|Prior Authorization Required|Restriction|Managed Coverage|1|2026-06-04
+9008|ST-REQ|Step Therapy Required|Restriction|Managed Coverage|1|2026-06-04
+9009|QL-REQ|Quantity Limit Required|Restriction|Managed Coverage|1|2026-06-04
+9010|PA-ST|PA + Step Therapy Required|Restriction|Managed Coverage|1|2026-06-04
+9011|NOT-COV|Not Covered|Non-Coverage|Negative Coverage|1|2026-06-04
+9012|NF|Not on Formulary|Non-Coverage|Negative Coverage|1|2026-06-04
+9013|EXC|Formulary Exception Available|Exception|Managed Coverage|1|2026-06-04
+9014|COV-R|Covered with Restrictions|Restriction|Managed Coverage|1|2026-06-04
+9015|PREF|Preferred|Formulary|Positive Coverage|1|2026-06-04

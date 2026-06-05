@@ -1,0 +1,52 @@
+STATE_ID|STATE_CODE|STATE_NAME|REGION|DIVISION|IS_ACTIVE|LOAD_DATE
+1|AL|Alabama|South|East South Central|1|2026-06-04
+2|AK|Alaska|West|Pacific|1|2026-06-04
+3|AZ|Arizona|West|Mountain|1|2026-06-04
+4|AR|Arkansas|South|West South Central|1|2026-06-04
+5|CA|California|West|Pacific|1|2026-06-04
+6|CO|Colorado|West|Mountain|1|2026-06-04
+7|CT|Connecticut|Northeast|New England|1|2026-06-04
+8|DE|Delaware|South|South Atlantic|1|2026-06-04
+9|FL|Florida|South|South Atlantic|1|2026-06-04
+10|GA|Georgia|South|South Atlantic|1|2026-06-04
+11|HI|Hawaii|West|Pacific|1|2026-06-04
+12|ID|Idaho|West|Mountain|1|2026-06-04
+13|IL|Illinois|Midwest|East North Central|1|2026-06-04
+14|IN|Indiana|Midwest|East North Central|1|2026-06-04
+15|IA|Iowa|Midwest|West North Central|1|2026-06-04
+16|KS|Kansas|Midwest|West North Central|1|2026-06-04
+17|KY|Kentucky|South|East South Central|1|2026-06-04
+18|LA|Louisiana|South|West South Central|1|2026-06-04
+19|ME|Maine|Northeast|New England|1|2026-06-04
+20|MD|Maryland|South|South Atlantic|1|2026-06-04
+21|MA|Massachusetts|Northeast|New England|1|2026-06-04
+22|MI|Michigan|Midwest|East North Central|1|2026-06-04
+23|MN|Minnesota|Midwest|West North Central|1|2026-06-04
+24|MS|Mississippi|South|East South Central|1|2026-06-04
+25|MO|Missouri|Midwest|West North Central|1|2026-06-04
+26|MT|Montana|West|Mountain|1|2026-06-04
+27|NE|Nebraska|Midwest|West North Central|1|2026-06-04
+28|NV|Nevada|West|Mountain|1|2026-06-04
+29|NH|New Hampshire|Northeast|New England|1|2026-06-04
+30|NJ|New Jersey|Northeast|Middle Atlantic|1|2026-06-04
+31|NM|New Mexico|West|Mountain|1|2026-06-04
+32|NY|New York|Northeast|Middle Atlantic|1|2026-06-04
+33|NC|North Carolina|South|South Atlantic|1|2026-06-04
+34|ND|North Dakota|Midwest|West North Central|1|2026-06-04
+35|OH|Ohio|Midwest|East North Central|1|2026-06-04
+36|OK|Oklahoma|South|West South Central|1|2026-06-04
+37|OR|Oregon|West|Pacific|1|2026-06-04
+38|PA|Pennsylvania|Northeast|Middle Atlantic|1|2026-06-04
+39|RI|Rhode Island|Northeast|New England|1|2026-06-04
+40|SC|South Carolina|South|South Atlantic|1|2026-06-04
+41|SD|South Dakota|Midwest|West North Central|1|2026-06-04
+42|TN|Tennessee|South|East South Central|1|2026-06-04
+43|TX|Texas|South|West South Central|1|2026-06-04
+44|UT|Utah|West|Mountain|1|2026-06-04
+45|VT|Vermont|Northeast|New England|1|2026-06-04
+46|VA|Virginia|South|South Atlantic|1|2026-06-04
+47|WA|Washington|West|Pacific|1|2026-06-04
+48|WV|West Virginia|South|South Atlantic|1|2026-06-04
+49|WI|Wisconsin|Midwest|East North Central|1|2026-06-04
+50|WY|Wyoming|West|Mountain|1|2026-06-04
+51|DC|District of Columbia|South|South Atlantic|1|2026-06-04

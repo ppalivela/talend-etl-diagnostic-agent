@@ -1,0 +1,21 @@
+ZIP_CODE|CITY|STATE_CODE|COUNTY|ZIP_TYPE|LOAD_DATE
+10001|New York|NY|New York|Standard|2026-06-04
+10036|New York|NY|New York|Standard|2026-06-04
+90001|Los Angeles|CA|Los Angeles|Standard|2026-06-04
+60601|Chicago|IL|Cook|Standard|2026-06-04
+77001|Houston|TX|Harris|Standard|2026-06-04
+85001|Phoenix|AZ|Maricopa|Standard|2026-06-04
+19101|Philadelphia|PA|Philadelphia|Standard|2026-06-04
+78201|San Antonio|TX|Bexar|Standard|2026-06-04
+92101|San Diego|CA|San Diego|Standard|2026-06-04
+75201|Dallas|TX|Dallas|Standard|2026-06-04
+95101|San Jose|CA|Santa Clara|Standard|2026-06-04
+78701|Austin|TX|Travis|Standard|2026-06-04
+30301|Atlanta|GA|Fulton|Standard|2026-06-04
+98101|Seattle|WA|King|Standard|2026-06-04
+02101|Boston|MA|Suffolk|Standard|2026-06-04
+80201|Denver|CO|Denver|Standard|2026-06-04
+37201|Nashville|TN|Davidson|Standard|2026-06-04
+21201|Baltimore|MD|Baltimore City|Standard|2026-06-04
+73101|Oklahoma City|OK|Oklahoma|Standard|2026-06-04
+89101|Las Vegas|NV|Clark|Standard|2026-06-04

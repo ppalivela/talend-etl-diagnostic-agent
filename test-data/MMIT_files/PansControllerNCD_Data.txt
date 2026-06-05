@@ -1,0 +1,11 @@
+NCD_PAN_ID|PLAN_ID|DRUG_ID|NCD_REASON|ALTERNATIVE_DRUG|EFF_DATE|TERM_DATE|LOAD_DATE
+12001|CVS001|1015|Non-preferred brand - covered alternative available|Cosentyx (secukinumab)|2026-01-01|2026-12-31|2026-06-04
+12002|CVS001|1016|Non-preferred - preferred IL-23 inhibitor available|Skyrizi (risankizumab)|2026-01-01|2026-12-31|2026-06-04
+12003|ESI001|1014|Step therapy required - preferred TNF inhibitor first|Humira or Enbrel|2026-01-01|2026-12-31|2026-06-04
+12004|ESI001|1016|Clinical review required - limited formulary coverage|Skyrizi (risankizumab)|2026-01-01|2026-12-31|2026-06-04
+12005|OPT001|1015|Non-preferred specialty brand|Skyrizi or Tremfya|2026-01-01|2026-12-31|2026-06-04
+12006|MED001|1013|Step therapy - must fail preferred TNF inhibitors|Humira (adalimumab) or Enbrel (etanercept)|2026-01-01|2026-12-31|2026-06-04
+12007|HUM001|1012|Preferred biosimilar available - Hadlima or Hyrimoz|Hadlima (adalimumab-bwwd)|2026-01-01|2026-12-31|2026-06-04
+12008|NAV001|1011|Specialty drug - requires specialty pharmacy + REMS|No alternative - REMS specialty pharmacy required|2026-01-01|2026-12-31|2026-06-04
+12009|MED001|1017|New JAK inhibitor - PA required, preferred JAK first|Xeljanz (tofacitinib) if appropriate|2026-01-01|2026-12-31|2026-06-04
+12010|HUM001|1019|CGRP inhibitor - PA required, oral preventives first|Topiramate or propranolol|2026-01-01|2026-12-31|2026-06-04

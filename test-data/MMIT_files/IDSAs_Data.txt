@@ -1,0 +1,21 @@
+IDSA_ID|DRUG_ID|PLAN_ID|STATUS_CODE|COVERAGE_TYPE|FORMULARY_TIER|COVERAGE_NOTES|EFF_DATE|LOAD_DATE
+10001|1001|CVS001|COV-T3|Commercial|3|Covered Tier 3 - PA Required for RA/PsA/AS/CD|2026-01-01|2026-06-04
+10002|1001|ESI001|PA-ST|Commercial|3|Step Edit + PA - 2 DMARD failures required|2026-01-01|2026-06-04
+10003|1001|OPT001|PA-REQ|Commercial|3|PA Required - clinical criteria apply|2026-01-01|2026-06-04
+10004|1001|MED001|COV-T3|Commercial|3|Covered Tier 3 with PA|2026-01-01|2026-06-04
+10005|1002|CVS001|PA-REQ|Commercial|2|PA Required - T2DM diagnosis, A1C documented|2026-01-01|2026-06-04
+10006|1002|HUM001|COV-T4|Medicare PDP|4|Covered with PA and step therapy|2026-01-01|2026-06-04
+10007|1003|CVS001|COV-T2|Commercial|2|Preferred Brand - covered no restrictions|2026-01-01|2026-06-04
+10008|1003|ESI001|COV-T2|Commercial|2|Preferred Brand Tier 2|2026-01-01|2026-06-04
+10009|1004|NAV001|QL-REQ|Commercial|2|Covered with quantity limit 30tabs/30days|2026-01-01|2026-06-04
+10010|1005|ESI001|PA-REQ|Commercial|2|PA Required - eGFR documented|2026-01-01|2026-06-04
+10011|1006|MED001|PA-REQ|Commercial|3|PA Required - HFrEF diagnosis required|2026-01-01|2026-06-04
+10012|1007|CVS001|COV-T4|Commercial|4|Specialty Tier 4 with PA|2026-01-01|2026-06-04
+10013|1009|OPT001|ST-REQ|Commercial|3|Step Therapy - TNF inhibitor failure required|2026-01-01|2026-06-04
+10014|1011|CVS001|COV-T5|Commercial|5|Specialty High Cost - PA Required|2026-01-01|2026-06-04
+10015|1013|ESI001|ST-REQ|Commercial|3|Step Therapy Required - other TNF first|2026-01-01|2026-06-04
+10016|1017|CVS001|PA-REQ|Commercial|4|PA Required - JAK inhibitor criteria|2026-01-01|2026-06-04
+10017|1018|HUM001|PA-REQ|Medicare PDP|5|PA Required - cancer diagnosis + biomarker|2026-01-01|2026-06-04
+10018|1019|OPT001|PA-REQ|Commercial|3|PA Required - migraine preventative failures|2026-01-01|2026-06-04
+10019|1012|NAV001|COV-T3|Commercial|3|Covered Specialty Tier 3 - no PA|2026-01-01|2026-06-04
+10020|1020|MED001|PA-REQ|Commercial|3|PA Required - biologic criteria|2026-01-01|2026-06-04
