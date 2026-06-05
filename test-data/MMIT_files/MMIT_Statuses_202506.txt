@@ -1,0 +1,21 @@
+ClientId|Period|FormularyId|MedId|TherapeuticClass|UniversalStatus|UniversalStatusRollup|RawStatus|ProcessingDate
+1001|202506|401|2001|Biologic|Covered|Covered|Tier 3|06-04-2026
+1002|202506|401|2002|Antidiabetic|Covered|Covered|Tier 2|06-04-2026
+1003|202506|401|2003|Anticoagulant|Covered|Covered|Tier 2|06-04-2026
+1004|202506|401|2004|Anticoagulant|Covered|Covered|Tier 3|06-04-2026
+1005|202506|401|2005|Antidiabetic|Covered|Covered|Tier 2|06-04-2026
+1006|202506|402|2006|Heart Failure|Covered|Covered|Tier 3|06-04-2026
+1007|202506|402|2007|Dermatology|Covered|Covered|Tier 4|06-04-2026
+1008|202506|402|2008|Dermatology|Covered|Covered|Tier 3|06-04-2026
+1009|202506|402|2009|Immunology|Covered|Covered|Tier 3|06-04-2026
+1010|202506|403|2010|Oncology|Covered|Covered|Tier 5|06-04-2026
+1011|202506|403|2011|Oncology|PA Required|PA Required|PA Required|06-04-2026
+1012|202506|403|2012|Immunology|Covered|Covered|Tier 3|06-04-2026
+1013|202506|403|2013|Immunology|Step Therapy|Step Therapy|Step Edit|06-04-2026
+1014|202506|404|2014|Dermatology|Covered|Covered|Tier 3|06-04-2026
+1015|202506|404|2015|Dermatology|Covered|Covered|Tier 3|06-04-2026
+1016|202506|404|2016|Dermatology|Covered|Covered|Tier 3|06-04-2026
+1017|202506|404|2017|Immunology|PA Required|PA Required|PA Required|06-04-2026
+1018|202506|405|2018|Oncology|Covered|Covered|Tier 5|06-04-2026
+1019|202506|405|2019|Neurology|Covered|Covered|Tier 3|06-04-2026
+1020|202506|405|2020|Immunology|Covered|Covered|Tier 3|06-04-2026

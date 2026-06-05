@@ -1,0 +1,5 @@
+ClientId|Period|OrgId|PlanName|FormularyId|FormularyName|ControllerId|ControllerName|MCOId|MCOName|ParentId|ParentName|Channel|PlanType|PBMId|PBMName|PBMRelationship|NotListedPolicy|NonFormularyPolicy|BenefitDesign|ProcessingDate
+1001|202506|301|MHA Gold HMO|401|Formulary Gold|501|Controller Alpha|801|MCO Alpha|601|Parent Alpha|Retail|HMO|701|ESI|Primary|Formulary|Non-Covered|Standard|06-04-2026
+1002|202506|302|MHA Silver PPO|402|Formulary Silver|502|Controller Beta|802|MCO Beta|602|Parent Beta|Mail|PPO|702|CVS|Primary|Non-Form|Covered|Premium|06-04-2026
+1003|202506|303|MHA Bronze EPO|403|Formulary Bronze|503|Controller Gamma|803|MCO Gamma|603|Parent Gamma|Retail|EPO|703|OptumRx|Primary|Formulary|Non-Covered|Standard|06-04-2026
+1004|202506|304|MHA Platinum HMO|404|Formulary Platinum|504|Controller Delta|804|MCO Delta|604|Parent Delta|Mail|HMO|704|MedImpact|Primary|Formulary|Covered|Premium|06-04-2026
