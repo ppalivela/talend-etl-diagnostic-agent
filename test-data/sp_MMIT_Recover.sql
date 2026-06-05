@@ -63,7 +63,7 @@ IF OBJECT_ID('dbo.sp_MMIT_Recover', 'P') IS NOT NULL
 GO
 
 CREATE PROCEDURE dbo.sp_MMIT_Recover
-    @JobName        VARCHAR(200) = 'Reload_MHA_BPG_Staging',
+    @JobName        VARCHAR(200) = 'MMIT_MHA_Data_Ingestion_Final',
     @ErrorStep      VARCHAR(100) = 'Unknown',   -- Pass the component name from Talend context
     @ErrorMessage   VARCHAR(MAX) = 'Subjob error'
 AS
@@ -73,6 +73,42 @@ BEGIN
     DECLARE @RecoveryAction VARCHAR(500) = '';
     DECLARE @Affected       INT          = 0;
     DECLARE @LogMsg         VARCHAR(MAX);
+
+    -- -------------------------------------------------------------------------
+    --  RECOVERY ACTION 0 (PREJOB):
+    --  If sp_MMIT_Prep failed because _Holding tables already exist
+    --  → Drop all orphaned _Holding tables so next run can start clean
+    -- -------------------------------------------------------------------------
+    IF @ErrorStep IN ('tDBRow_1_Prejob', 'sp_MMIT_Prep', 'Prejob', 'tDBRow_1')
+    BEGIN
+        DECLARE @dropSql    NVARCHAR(MAX);
+        DECLARE @tblName    NVARCHAR(256);
+        DECLARE @schName    NVARCHAR(128);
+        DECLARE @holdingCnt INT = 0;
+
+        DECLARE hCur CURSOR FOR
+            SELECT SCHEMA_NAME(schema_id), name
+            FROM sys.tables
+            WHERE name LIKE '%_Holding%' OR name LIKE '%Holding%';
+
+        OPEN hCur;
+        FETCH NEXT FROM hCur INTO @schName, @tblName;
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            SET @dropSql = CONCAT('DROP TABLE IF EXISTS [',@schName,'].[',@tblName,'];');
+            EXEC sp_executesql @dropSql;
+            SET @holdingCnt = @holdingCnt + 1;
+            FETCH NEXT FROM hCur INTO @schName, @tblName;
+        END
+        CLOSE hCur;
+        DEALLOCATE hCur;
+
+        SET @RecoveryAction = @RecoveryAction
+            + CONCAT('DROPPED ', @holdingCnt, ' orphaned _Holding table(s); ');
+        SET @Affected = @holdingCnt;
+
+        PRINT CONCAT('sp_MMIT_Recover [Prejob]: Dropped ', @holdingCnt, ' _Holding tables. Job can now re-run.');
+    END
 
     -- -------------------------------------------------------------------------
     --  RECOVERY ACTION 1:
@@ -86,7 +122,7 @@ BEGIN
 
     -- -------------------------------------------------------------------------
     --  RECOVERY ACTION 2:
-    --  If the SP (tDBRow_1) or staging load (tDBOutput_1) failed:
+    --  If the SP (tDBRow_1 main) or staging load (tDBOutput_1) failed:
     --    → DELETE records inserted TODAY with Is_New_Record=1 and NOT YET SENT
     --      (these are orphaned inserts from the failed run)
     --  If file output or post-send update (tDBRow_2) failed:
@@ -94,7 +130,7 @@ BEGIN
     --    → Instead flag MMIT_Status='RecoveryNeeded' for analyst review
     -- -------------------------------------------------------------------------
 
-    IF @ErrorStep IN ('tDBOutput_1', 'tDBRow_1', 'tDBInput_1', 'Unknown')
+    IF @ErrorStep IN ('tDBOutput_1', 'tDBInput_1', 'Unknown')
     BEGIN
         -- Safe to delete: these rows were never sent to MMIT
         DELETE FROM dbo.MHA_Master_BPG
@@ -189,31 +225,62 @@ GO
 --  TALEND WIRING INSTRUCTIONS
 -- =============================================================================
 /*
-In Talend Studio — Job: Reload_MHA_BPG_Staging
+In Talend Studio — Job: MMIT_MHA_Data_Ingestion_Final
 
-1. Add a new tDBRow component: name it "tDBRow_Recovery"
-   SQL:
+STRUCTURE:
+  ┌─────────────────────────────────────────────────────────────┐
+  │  PREJOB                                                      │
+  │  tDBRow_1 (EXEC dbo.sp_MMIT_Prep)                           │
+  │       │                                                      │
+  │       └──OnSubjobError──▶  tDBRow_Recovery                  │
+  │              (EXEC dbo.sp_MMIT_Recover                       │
+  │               'MMIT_MHA_Data_Ingestion_Final',               │
+  │               'tDBRow_1_Prejob',                             │
+  │               '_Holding tables exist - cleaned up')          │
+  └─────────────────────────────────────────────────────────────┘
+  ┌─────────────────────────────────────────────────────────────┐
+  │  MAIN JOB                                                    │
+  │  tDBOutput_1  ──OnSubjobError──▶  tDBRow_Recovery           │
+  │  tDBInput_2   ──OnSubjobError──▶  tDBRow_Recovery           │
+  │  tFileOutputDelimited_1 ─OnSubjobError──▶ tDBRow_Recovery   │
+  │  tDBRow_2     ──OnSubjobError──▶  tDBRow_Recovery           │
+  └─────────────────────────────────────────────────────────────┘
+
+STEPS TO WIRE IN TALEND STUDIO:
+1. Add tDBRow_Recovery component (use same DB connection as tDBRow_1)
+   SQL (use the static version — Talend passes @ErrorStep per connection):
+
+   FOR PREJOB tDBRow_1:
        EXEC [dbo].[sp_MMIT_Recover]
-           @JobName      = '(+)globalMap.get("context.projectName") +"."+ (String)globalMap.get("context.jobName")',
-           @ErrorStep    = '(+)(String)globalMap.get("error.component")',
-           @ErrorMessage = '(+)(String)globalMap.get("error.message")'
-   
-   OR simpler static version:
-       EXEC [dbo].[sp_MMIT_Recover] 'Reload_MHA_BPG_Staging', 'ErrorStep', 'Job failed'
+           'MMIT_MHA_Data_Ingestion_Final',
+           'tDBRow_1_Prejob',
+           'sp_MMIT_Prep failed - _Holding tables exist'
 
-2. Draw OnSubjobError connections TO tDBRow_Recovery FROM:
-       tDBOutput_1          --OnSubjobError-->  tDBRow_Recovery
-       tDBRow_1             --OnSubjobError-->  tDBRow_Recovery
-       tDBInput_2           --OnSubjobError-->  tDBRow_Recovery
-       tFileOutputDelimited_1 --OnSubjobError-->  tDBRow_Recovery
-       tDBRow_2             --OnSubjobError-->  tDBRow_Recovery
+   FOR MAIN JOB (one tDBRow_Recovery per component, or one shared):
+       EXEC [dbo].[sp_MMIT_Recover]
+           'MMIT_MHA_Data_Ingestion_Final',
+           'tDBRow_2',          ← change per component
+           'Subjob failed'
 
-3. tDBRow_Recovery uses the SAME connection as tDBConnection_2 (Formulary_Data)
+2. Draw OnSubjobError arrows:
+   PREJOB:
+     tDBRow_1 (sp_MMIT_Prep) ──OnSubjobError──▶ tDBRow_Recovery_Prejob
 
-4. Recovery behavior by failure point:
-   tDBOutput_1 fails   → staging truncated + orphan rows deleted → next run clean
-   tDBRow_1 fails      → staging truncated + orphan rows deleted → next run retries
+   MAIN JOB:
+     tDBOutput_1              ──OnSubjobError──▶ tDBRow_Recovery
+     tDBInput_2               ──OnSubjobError──▶ tDBRow_Recovery
+     tFileOutputDelimited_1   ──OnSubjobError──▶ tDBRow_Recovery
+     tDBRow_2                 ──OnSubjobError──▶ tDBRow_Recovery
+
+3. Recovery behavior by failure point:
+   Prejob tDBRow_1 fails (_Holding exists) → DROPS _Holding tables → re-run OK
+   tDBOutput_1 fails   → staging truncated + orphan rows deleted → re-run OK
    tDBInput_2 fails    → rows flagged RecoveryNeeded → analyst checks MMIT
    tFileOutput fails   → rows flagged RecoveryNeeded → analyst checks MMIT
    tDBRow_2 fails      → rows flagged RecoveryNeeded → analyst checks MMIT
+
+NOTE: tDBRow_Recovery in PREJOB is separate from tDBRow_Recovery in MAIN JOB
+      because Prejob and Main Job are different subjob scopes in Talend.
+      You can use ONE shared tDBRow_Recovery if you place it outside both scopes
+      and connect OnSubjobError from both.
 */
